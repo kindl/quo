@@ -23,6 +23,6 @@ run parser inputPath outputPath = do
     putStrLn ("Written to " ++ outputPath)
 
 runDependingOnEnding path =
-    if isSuffixOf ".rs" path
-        then run (parse Rslike.statements) path "out/rslike.ssa"
+    if isSuffixOf ".guo" path
+        then run (parse Golike.statements) path "out/golike.ssa"
         else run (parse Clike.statements) path "out/clike.ssa"
