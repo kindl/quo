@@ -233,15 +233,15 @@ autoIntoType m =
                 then return (Definition name (TypeVariable "bool" []) (Apply auto e es))
                 else (case lookup v env of
                     -- TODO match returnType with (last ts)
-                    Just t@(TypeVariable "Func" ts) -> return (Definition name (last ts) (Apply t e es))
+                    Just t@(TypeVariable "Fn" ts) -> return (Definition name (last ts) (Apply t e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
         f (FunctionDefintion name returnType [] parameters statements) = do
-            addToEnv name (TypeVariable "Func" (fmap snd parameters ++ [returnType]))
+            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]))
             statements' <- traverse f statements
             return (FunctionDefintion name returnType [] parameters statements')
         f s@(ExternDefintion name returnType parameters) = do
-            addToEnv name (TypeVariable "Func" (fmap snd parameters ++ [returnType]))
+            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]))
             return s
         f s = return s
     in traverse f m
@@ -295,7 +295,7 @@ toQbeS (ExternDefintion _ _ _) = ""
 toQbeS (StructDefinition name _ parameters) = "type" <+> ":" <> name <+> "=" <+> "{" <+> intercalate ", " (fmap toQbeStructParam parameters) <+> "}"
 toQbeS other = error ("QbeS Following statement should no longer exist at this stage " ++ show other)
 
-makeCall (TypeVariable "Func" tys) v parameters =
+makeCall (TypeVariable "Fn" tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> "(" <> intercalate ", " (fmap toQbeParam parametersWithType) <> ")"
