@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Rslike where
+module Golike where
 
 import Control.Applicative((<|>), optional, many, liftA2, liftA3)
 import Data.Attoparsec.Combinator(sepBy', option)

@@ -4,7 +4,7 @@ import qualified Data.Text.IO as Text
 import Compiler
 import System.Environment
 import Data.List(isSuffixOf)
-import qualified Rslike
+import qualified Golike
 import qualified Clike
 import Parser
 

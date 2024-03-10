@@ -13,7 +13,7 @@ common warnings
 executable quo
     import:         warnings
     main-is:        Main.hs
-    other-modules:  Types, Parser, Rslike, Clike, Lexer, Compiler, Platte
+    other-modules:  Types, Parser, Golike, Clike, Lexer, Compiler, Platte
     build-depends:
         base,
         attoparsec < 0.15,

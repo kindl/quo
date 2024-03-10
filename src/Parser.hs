@@ -12,7 +12,7 @@ import qualified Data.Text.IO as Text
 import Lexer(lexe)
 
 
--- TODO merge common parts in Rslike and Clike
+-- TODO merge common parts in Golike and Clike
 -- They are mostly the same and only the statements are different
 parseFile parser fileName = fmap (parse parser) (Text.readFile fileName)
 
