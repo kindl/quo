@@ -6,7 +6,7 @@ import Data.List(uncons)
 import Data.Either(lefts, rights)
 import Data.Functor(($>))
 import Data.Attoparsec.Combinator(sepBy', eitherP, option)
-import Control.Monad.Trans.State(StateT(..), runStateT)
+import Control.Monad.Trans.State.Strict(StateT(..), runStateT)
 import Types
 import qualified Data.Text.IO as Text
 import Lexer(lexe)
