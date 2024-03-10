@@ -230,7 +230,7 @@ autoIntoType m =
             env <- lift (readIORef ref)
             if v == "!=" || v == "=="
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
-                then return (Definition name (TypeVariable "bool" []) (Apply auto e es))
+                then return (Definition name (TypeVariable "i32" []) (Apply auto e es))
                 else (case lookup v env of
                     -- TODO match returnType with (last ts)
                     Just t@(TypeVariable "Fn" ts) -> return (Definition name (last ts) (Apply t e es))
@@ -269,9 +269,9 @@ toQbeP s = toQbeS s
 
 -- TODO use type in comparisons for float and similar
 toQbeS (Definition name ty (Apply t (Variable _ "==" _) [e1, e2])) =
-    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "ceqw" <+> toQbeE e1 <> "," <+> toQbeE e2
+    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2
 toQbeS (Definition name ty (Apply t (Variable _ "!=" _) [e1, e2])) =
-    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "cnew" <+> toQbeE e1 <> "," <+> toQbeE e2
+    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2
 -- No variable necessary for void
 toQbeS (Definition _ (TypeVariable "void" []) (Apply ty v parameters)) =
     indent <> makeCall ty v parameters
@@ -336,8 +336,6 @@ escape = replace "\0" "\\0"
 -- TODO decide between string pointer and string
 toQbeT (TypeVariable "char" []) = "b"
 toQbeT (TypeVariable "void" []) = " "
--- TODO Is bool b or w?
-toQbeT (TypeVariable "bool" []) = "w"
 toQbeT (TypeVariable "i32" []) = "w"
 toQbeT (TypeVariable "i64" []) = "l"
 toQbeT (TypeVariable "ptr" []) = "l"
