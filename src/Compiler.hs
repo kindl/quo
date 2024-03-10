@@ -7,7 +7,7 @@ import Control.Monad.Trans.Reader(runReaderT, asks)
 import Control.Monad.Trans.Class(lift)
 import Data.IORef
 import Platte
-import Data.Text(Text, pack, intercalate, isSuffixOf, replace)
+import Data.Text(Text, pack, unpack, intercalate, replace)
 
 
 data Env = Env (IORef Int) (IORef [Statement]) (IORef [(Text, Type)])
@@ -37,6 +37,7 @@ transformations = toM normalizeTypeNames
     >=> transformCallIntoDef
     >=> ssa
     >=> autoIntoType
+    >=> toM pointersIntoType
 
 toM f x = return (f x)
 
@@ -47,6 +48,7 @@ normalizeTypeNames m =
         f (TypeVariable "long" []) = TypeVariable "i64" []
         f (TypeVariable "uint" []) = TypeVariable "u32" []
         f (TypeVariable "ulong" []) = TypeVariable "u64" []
+        f (TypeVariable "bool" []) = TypeVariable "i32" []
         f x = x
     in transformBi f m
 
@@ -244,6 +246,13 @@ autoIntoType m =
         f s = return s
     in traverse f m
 
+pointersIntoType m =
+    let
+        f (TypeVariable "UnsafeMutablePointer" _) = TypeVariable "ptr" []
+        f (TypeVariable "UnsafePointer" _) = TypeVariable "ptr" []
+        f t = t
+    in transformBi f m
+
 addToEnv name ty = do
     ref <- asks (\(Env _ _ tyEnv) -> tyEnv)
     lift (modifyIORef' ref (insert name ty))
@@ -331,19 +340,12 @@ toQbeT (TypeVariable "void" []) = " "
 toQbeT (TypeVariable "bool" []) = "w"
 toQbeT (TypeVariable "i32" []) = "w"
 toQbeT (TypeVariable "i64" []) = "l"
-toQbeT (TypeVariable "auto" []) = error "auto in late stage"
--- TODO the following match should look more like this:
--- toQbeT (TypeVariable s []) =
--- because type parameters should not exist at this point.
--- Currently this is necessary for constructs like
--- `UnsafePointer<char>`
-toQbeT (TypeVariable s _) =
-    if isSuffixOf "Pointer" s
-        then pointerLength
-        -- Add : sigil for structs
-        else ":" <> s
-
-pointerLength = "l"
+toQbeT (TypeVariable "ptr" []) = "l"
+toQbeT (TypeVariable "auto" []) = error "Error: auto appeared in printing stage"
+toQbeT (TypeVariable s []) = ":" <> s
+toQbeT (TypeVariable s typeParameters) =
+    error ("Error: generic type "
+        ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
 
 indent = "    "
 
