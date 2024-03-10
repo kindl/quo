@@ -162,7 +162,7 @@ transformIfIntoJumps m =
             thenVar <- fmap (\i -> pack ("then" ++ show i)) newUnique
             elseVar <- fmap (\i -> pack ("else" ++ show i)) newUnique
 
-            return ([Definition condVar (TypeVariable "bool" []) cond,
+            return ([Definition condVar (TypeVariable "i32" []) cond,
                 JumpNonZero condVar thenVar elseVar,
                 Label thenVar] ++ thenBranch ++ [Label elseVar] ++ concat elseBranch ++ statements)
         f x = return x
@@ -211,7 +211,7 @@ transformWhileIntoJumps m =
             breakVar <- fmap (\i -> pack ("break" ++ show i)) newUnique
 
             return ([Label continueVar,
-                Definition condVar (TypeVariable "bool" []) cond,
+                Definition condVar (TypeVariable "i32" []) cond,
                 JumpNonZero condVar loopVar breakVar,
                 Label loopVar] ++ loopStats ++ [Jump continueVar, Label breakVar] ++ statements)
         f x = return x
