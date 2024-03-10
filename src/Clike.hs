@@ -2,7 +2,7 @@
 module Clike where
 
 import Control.Applicative((<|>), optional, many, liftA2, liftA3)
-import Data.Attoparsec.Combinator(sepBy', option)
+import Data.Attoparsec.Combinator(option)
 import Types
 import Parser
 
@@ -25,13 +25,13 @@ callStatement = do
 
 returnStatement = fmap Return (token "return" *> optional expr <* token ";")
 
-importStatement = liftA2 Import (token "import" *> identifier) (optional (curlies (sepBy' identifier (token ",")))) <* token ";"
+importStatement = liftA2 Import (token "import" *> identifier) (optional (curlies (sepByTrailing identifier (token ",")))) <* token ";"
 
 externDefinition = do
     _ <- token "extern"
     t <- typ
     name <- identifier
-    params <- parens (sepBy' parameter (token ","))
+    params <- parens (sepByTrailing parameter (token ","))
     _ <- token ";"
     return (ExternDefintion name t params)
 
@@ -70,7 +70,7 @@ functionDefintion = do
     t <- typ
     name <- identifier
     ts <- option [] typeNameParameters
-    params <- parens (sepBy' parameter (token ","))
+    params <- parens (sepByTrailing parameter (token ","))
     body <- curlies statements
     return (FunctionDefintion name t ts params body)
 

@@ -5,7 +5,7 @@ import Control.Applicative
 import Data.List(uncons)
 import Data.Either(lefts, rights)
 import Data.Functor(($>))
-import Data.Attoparsec.Combinator(sepBy', eitherP, option)
+import Data.Attoparsec.Combinator(eitherP, option)
 import Control.Monad.Trans.State.Strict(StateT(..), runStateT)
 import Types
 import qualified Data.Text.IO as Text
@@ -27,9 +27,9 @@ parse parser str = case lexe str of
 next = StateT uncons
 
 -- This is for definitions, like functions
-typeNameParameters = angles (sepBy' identifier (token ","))
+typeNameParameters = angles (sepByTrailing identifier (token ","))
 
-typeParameters = angles (sepBy' typ (token ","))
+typeParameters = angles (sepByTrailing typ (token ","))
 
 typ = (token "auto" $> auto) <|> typeVariable
 
@@ -84,7 +84,7 @@ templateStringMid = do
 
 literal = integer <|> double <|> string <|> bool
 
-arrayExpression = fmap ArrayExpression (squares (sepBy' expr (token ",")))
+arrayExpression = fmap ArrayExpression (squares (sepByTrailing expr (token ",")))
 
 -- TODO decide if we should be able to parse 2.ToString()
 
@@ -104,7 +104,7 @@ squareAccess = fmap (flip SquareAccess) (squares expr)
 
 -- a(2, 3)
 -- a<int>(2, 3)
-parameterList = fmap (flip (Apply auto)) (parens (sepBy' expr (token ",")))
+parameterList = fmap (flip (Apply auto)) (parens (sepByTrailing expr (token ",")))
 
 variable = liftA2 (Variable Local) identifier (option [] typeParameters)
 
@@ -135,3 +135,8 @@ parens p = token "(" *> p <* token ")"
 squares p = token "[" *> p <* token "]"
 curlies p = token "{" *> p <* token "}"
 angles p = token "<" *> p <* token ">"
+
+sepBy1Trailing p sep =
+    liftA2 (:) p (many (sep *> p)) <* optional sep
+
+sepByTrailing p sep = sepBy1Trailing p sep <|> return []

@@ -2,7 +2,7 @@
 module Golike where
 
 import Control.Applicative((<|>), optional, many, liftA2, liftA3)
-import Data.Attoparsec.Combinator(sepBy', option)
+import Data.Attoparsec.Combinator(option)
 import Types
 import Parser
 
@@ -25,13 +25,13 @@ callStatement = do
 
 returnStatement = fmap Return (token "return" *> optional expr)
 
-importStatement = liftA2 Import (token "import" *> identifier) (optional (curlies (sepBy' identifier (token ","))))
+importStatement = liftA2 Import (token "import" *> identifier) (optional (curlies (sepByTrailing identifier (token ","))))
 
 externDefinition = do
     _ <- token "extern"
     _ <- token "fn"
     name <- identifier
-    params <- parens (sepBy' parameter (token ","))
+    params <- parens (sepByTrailing parameter (token ","))
     t <- typ
     return (ExternDefintion name t params)
 
@@ -68,7 +68,7 @@ structDefinition = do
 functionDefintion = do
     name <- token "fn" *> identifier
     ts <- option [] typeNameParameters
-    params <- parens (sepBy' parameter (token ","))
+    params <- parens (sepByTrailing parameter (token ","))
     t <- optionalType
     body <- curlies statements
     return (FunctionDefintion name t ts params body)
