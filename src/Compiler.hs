@@ -10,7 +10,13 @@ import Platte
 import Data.Text(Text, pack, unpack, intercalate, replace)
 
 
-data Env = Env (IORef Int) (IORef [Statement]) (IORef [(Text, Type)])
+data Env = Env
+    -- Name supply
+    (IORef Int)
+    -- Global data for string literals
+    (IORef [Statement])
+    -- Type lookup for functions
+    (IORef [(Text, Type)])
 
 insert key value env = (key, value) : env
 
@@ -256,8 +262,6 @@ pointersIntoType m =
 addToEnv name ty = do
     ref <- asks (\(Env _ _ tyEnv) -> tyEnv)
     lift (modifyIORef' ref (insert name ty))
-    return ()
-
 
 -- Pretty Printing to Qbe format
 toQbe s = intercalate "\n\n" (fmap toQbeP s)
@@ -292,14 +296,17 @@ toQbeS (Label e) = "@" <> e
 -- TODO filter these out, because they create a lot of whitespace
 toQbeS (Import _ _) = ""
 toQbeS (ExternDefintion _ _ _) = ""
-toQbeS (StructDefinition name _ parameters) = "type" <+> ":" <> name <+> "=" <+> "{" <+> intercalate ", " (fmap toQbeStructParam parameters) <+> "}"
-toQbeS other = error ("QbeS Following statement should no longer exist at this stage " ++ show other)
+toQbeS (StructDefinition name _ parameters) =
+    "type" <+> ":" <> name <+> "=" <+> "{"
+        <+> intercalate ", " (fmap toQbeStructParam parameters)
+        <+> "}"
+toQbeS other = error ("Error: QbeS Following statement appearedd in printing stage " ++ show other)
 
 makeCall (TypeVariable "Fn" tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> "(" <> intercalate ", " (fmap toQbeParam parametersWithType) <> ")"
-makeCall t v _ = error ("Non-function type in makeCall " ++ show t ++ " calling " ++ show v)
+makeCall t v _ = error ("Error: Non-function type in makeCall " ++ show t ++ " calling " ++ show v)
 
 toQbeFunParam (name, ty) = toQbeT ty <+> "%" <> name
 
