@@ -12,10 +12,12 @@ int eof = -1;
 
 /*
 TODO inline
-T alloc<T>() {
-    return cast<T>(malloc(sizeof<T>()));
+UnsafePointer<T> alloc<T>() {
+    return cast<UnsafePointer<T>>(malloc(sizeof<T>()));
 }
+*/
 
+/*
 void arrayStuff() {
     auto arr = [];
 }
