@@ -8,6 +8,7 @@ import Control.Monad.Trans.Class(lift)
 import Data.IORef
 import Platte
 import Data.Text(Text, pack, unpack, intercalate, replace)
+import Data.Maybe(fromMaybe)
 
 
 data Env = Env
@@ -17,29 +18,51 @@ data Env = Env
     (IORef [Statement])
     -- Type lookup for functions
     (IORef [(Text, Type)])
+    -- Type parameter applications
+    (IORef [(Text, [Type])])
 
 insert key value env = (key, value) : env
 
 newUnique = do
-    ref <- asks (\(Env supply _ _) -> supply)
+    ref <- asks (\(Env supply _ _ _) -> supply)
     lift (modifyIORef' ref succ >> readIORef ref)
+
+addToEnv name ty = do
+    ref <- asks (\(Env _ _ tyEnv _) -> tyEnv)
+    lift (modifyIORef' ref (insert name ty))
+
+ensureInstance name typeParameters = do
+    ref <- asks (\(Env _ _ _ typeParameterApplications) -> typeParameterApplications)
+    lift (modifyIORef' ref (insert name typeParameters))
+
+findTypeParameterApplications name = do
+    ref <- asks (\(Env _ _ _ typeParameterApplications) -> typeParameterApplications)
+    env <- lift (readIORef ref)
+    return [found | (n, found) <- env, n == name]
 
 -- Transformations
 runTransformations m = do
     i <- newIORef 0
     env <- newIORef []
     tyEnv <- newIORef []
+    typeParameterApplications <- newIORef []
 
-    result <- runReaderT (transformations m) (Env i env tyEnv)
+    result <- runReaderT (transformations m) (Env i env tyEnv typeParameterApplications)
     statements <- readIORef env
 
     return (statements ++ result)
 
 transformations = toM normalizeTypeNames
+    >=> toM makeFunctionsGlobal
+    >=> genericVariableIntoSpecialization
+    >=> genericDefinitionIntoSpecialization
+
+    >=> genericVariableIntoSpecialization
+    >=> genericDefinitionIntoSpecialization
+
     >=> makeStringsGlobal
     >=> transformIfIntoJumps
     >=> transformWhileIntoJumps
-    >=> toM makeFunctionsGlobal
     >=> transformCallIntoDef
     >=> ssa
     >=> autoIntoType
@@ -63,7 +86,7 @@ makeStringsGlobal m =
     let
         f s@(String _) = do
             n <- fmap (\i -> pack ("s" ++ show i)) newUnique
-            ref <- asks (\(Env _ env _) -> env)
+            ref <- asks (\(Env _ env _ _) -> env)
             lift (modifyIORef' ref (\e -> Definition n (TypeVariable "char" []) s : e))
             return (Variable Global n [])
         f x = return x
@@ -222,17 +245,81 @@ transformWhileIntoJumps m =
 -- * go into all function definitions without type parameters (leafs)
 -- * look for calls of generic functions and uses of genric structs
 -- * instantiate their specialization
+--    * substitute all T1 ... Tn with the type parameters    
 -- * exchange generic calls with calls to the specialization
 -- * for example alloc<int>() is transformed into alloc__int() and specialization alloc__int is created
 -- * exchange use of generic structs with use of the specialization
 -- * repeat for the specializations, because they also contain generic calls
 -- * some generic calls have to be built-in. For example sizeof<int>() or cast<int>(v)
 
+genericVariableIntoSpecialization m =
+    let
+        f fd@(FunctionDefintion _ _ (_:_) _ _) = return fd
+        f s = genericVariableIntoSpecialization' s
+    in traverse f m
+
+genericVariableIntoSpecialization' m =
+    let
+        f v@(Variable _ _ []) =
+            return v
+        f v@(Variable _ "sizeof" _) =
+            return v
+        f (Apply _ (Variable Global "sizeof" [t]) []) =
+            return (Int64 (calculateSize t))
+        f (Variable Global name typeParameters) = do
+            _ <- ensureInstance name typeParameters
+            let concreteName = concretize name typeParameters
+            lift (putStrLn ("Ensure specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
+            return (Variable Global concreteName [])
+        f x = return x
+    in transformBiM f m
+
+calculateSize (TypeVariable "i32" []) = 4
+
+genericDefinitionIntoSpecialization m =
+    let
+        f statements@(FunctionDefintion _ _ [] _ _:_) =
+            return statements
+        f (FunctionDefintion name returnType functionTypeParameters params body:statements) = do
+            typeParameterApplications <- findTypeParameterApplications name
+            lift (putStrLn ("Generating specialization for " ++ show (name, typeParameterApplications)))
+            let concretes = fmap (instantiate name returnType functionTypeParameters params body) typeParameterApplications
+            return (concretes ++ statements)
+        f s = return s
+    in transformBiM f m
+
+concretize name typeParameters =
+    intercalate "__" (name:fmap prettyType typeParameters)
+
+prettyType (TypeVariable n []) = n
+prettyType (TypeVariable "UnsafePointer" [t]) = prettyType t <> "ptr"
+prettyType (TypeVariable "UnsafeMutablePointer" [t]) = prettyType t <> "mutptr"
+prettyType t = error ("Failed pretty " ++ show t)
+
+instantiate name returnType functionTypeParameters params stats typeParameters =
+    let
+        subst = bind functionTypeParameters typeParameters
+        
+        concreteName = concretize name typeParameters
+        returnType' = substitute subst returnType
+        params' = substitute subst params
+        stats' = substitute subst stats
+    in FunctionDefintion concreteName returnType' [] params' stats'
+
+bind = zip
+
+substitute substitution m =
+    let
+        f t@(TypeVariable v []) =
+            fromMaybe t (lookup v substitution)
+        f t = t
+    in transformBi f m
+
 -- Turns auto into concrete types
 autoIntoType m =
     let
         f (Definition name returnType (Apply _ e@(Variable _ v []) es)) = do
-            ref <- asks (\(Env _ _ tyEnv) -> tyEnv)
+            ref <- asks (\(Env _ _ tyEnv _) -> tyEnv)
             env <- lift (readIORef ref)
             if v == "!=" || v == "=="
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
@@ -258,10 +345,6 @@ pointersIntoType m =
         f (TypeVariable "UnsafePointer" _) = TypeVariable "ptr" []
         f t = t
     in transformBi f m
-
-addToEnv name ty = do
-    ref <- asks (\(Env _ _ tyEnv) -> tyEnv)
-    lift (modifyIORef' ref (insert name ty))
 
 -- Pretty Printing to Qbe format
 toQbe s = intercalate "\n\n" (fmap toQbeP s)

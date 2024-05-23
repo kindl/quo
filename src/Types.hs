@@ -51,6 +51,8 @@ data Expression =
     | DotAccess Expression Text [Type]
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
+-- TODO
+    | CastExpression Expression Expression
 -- Literals
     | Boolean Bool
     | String Text
