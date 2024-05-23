@@ -48,7 +48,7 @@ whileStatement = do
     return (While e body)
 
 forPart =
-    liftA3 (\t i e -> (i , t, e)) typ identifier (token "in" *> expr)
+    liftA3 (\t i e -> (i, t, e)) typ identifier (token "in" *> expr)
 
 switchStatement =
     liftA2 Switch (token "switch" *> parens expr) (curlies (many switchOptions))
