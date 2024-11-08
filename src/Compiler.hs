@@ -7,8 +7,9 @@ import Control.Monad.Trans.Reader(runReaderT, asks)
 import Control.Monad.Trans.Class(lift)
 import Data.IORef
 import Platte
-import Data.Text(Text, pack, unpack, intercalate, replace)
+import Data.Text(Text, pack, unpack, replace)
 import Data.Maybe(fromMaybe)
+import Drucker
 
 
 data Env = Env
@@ -243,7 +244,7 @@ transformWhileIntoJumps m =
 -- IDEA for generic
 -- * grab all generic function and struct definitions
 -- * go into all function definitions without type parameters (leafs)
--- * look for calls of generic functions and uses of genric structs
+-- * look for calls of generic functions and uses of generic structs
 -- * instantiate their specialization
 --    * substitute all T1 ... Tn with the type parameters    
 -- * exchange generic calls with calls to the specialization
@@ -289,7 +290,7 @@ genericDefinitionIntoSpecialization m =
     in transformBiM f m
 
 concretize name typeParameters =
-    intercalate "__" (name:fmap prettyType typeParameters)
+    foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap prettyType typeParameters)
 
 prettyType (TypeVariable n []) = n
 prettyType (TypeVariable "UnsafePointer" [t]) = prettyType t <> "ptr"
@@ -351,60 +352,60 @@ toQbe s = intercalate "\n\n" (fmap toQbeP s)
 
 -- Top level
 toQbeP (Definition name ty e) =
-    "data" <+> "$" <> name <+> "=" <+> "{" <+> toQbeT ty <+> toQbeE e <+> "}"
+    "data" <+> "$" <> fromText name <+> "=" <+> "{" <+> toQbeT ty <+> toQbeE e <+> "}"
 toQbeP s = toQbeS s
 
 -- TODO use type in comparisons for float and similar
 toQbeS (Definition name ty (Apply t (Variable _ "==" _) [e1, e2])) =
-    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2
+    indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2)
 toQbeS (Definition name ty (Apply t (Variable _ "!=" _) [e1, e2])) =
-    indent <> "%" <> name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2
+    indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2)
 -- No variable necessary for void
 toQbeS (Definition _ (TypeVariable "void" []) (Apply ty v parameters)) =
-    indent <> makeCall ty v parameters
+    indent (toQbeCall ty v parameters)
 toQbeS (Definition name returnType (Apply ty v parameters)) =
-    indent <> "%" <> name <+> "=" <> toQbeT returnType <+> makeCall ty v parameters
+    indent ("%" <> fromText name <+> "=" <> toQbeT returnType <+> toQbeCall ty v parameters)
 toQbeS (Definition name ty e) =
-    indent <> "%" <> name <+> "=" <> toQbeT ty <+> toQbeE e
+    indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> toQbeE e)
 toQbeS (FunctionDefintion name ty _ parameters statements) =
-    "export function" <+> toQbeT ty <+> "$" <> name <> "(" <> intercalate ", " (fmap toQbeFunParam parameters) <> ")" <+> "{\n"
-    <> "@start\n"
-    <> intercalate "\n" (fmap toQbeS statements)
-    <> "\n}"
-toQbeS (Return (Just e)) = indent <> "ret" <+> toQbeE e
-toQbeS (Return Nothing) = indent <> "ret"
-toQbeS (JumpNonZero c t e) = indent <> "jnz" <+> "%" <> c <> "," <+> "@" <> t <> "," <+> "@" <> e
-toQbeS (Jump l) = indent <> "jmp" <+> "@" <> l
-toQbeS (Label e) = "@" <> e
+    "export function" <+> toQbeT ty <+> "$" <> fromText name <> "(" <> intercalate ", " (fmap toQbeFunParam parameters) <> ")" <+> "{"
+    <//> "@start"
+    <//> intercalate "\n" (fmap toQbeS statements)
+    <//> "}"
+toQbeS (Return (Just e)) = indent ("ret" <+> toQbeE e)
+toQbeS (Return Nothing) = indent "ret"
+toQbeS (JumpNonZero c t e) = indent ("jnz" <+> "%" <> fromText c <> "," <+> "@" <> fromText t <> "," <+> "@" <> fromText e)
+toQbeS (Jump l) = indent ("jmp" <+> "@" <> fromText l)
+toQbeS (Label e) = "@" <> fromText e
 -- TODO filter these out, because they create a lot of whitespace
 toQbeS (Import _ _) = ""
 toQbeS (ExternDefintion _ _ _) = ""
 toQbeS (StructDefinition name _ parameters) =
-    "type" <+> ":" <> name <+> "=" <+> "{"
-        <+> intercalate ", " (fmap toQbeStructParam parameters)
-        <+> "}"
+    "type" <+> ":" <> fromText name <+> "=" <+> "{"
+        <> intercalate ", " (fmap toQbeStructParam parameters)
+        <> "}"
 toQbeS other = error ("Error: QbeS Following statement appearedd in printing stage " ++ show other)
 
-makeCall (TypeVariable "Fn" tys) v parameters =
+toQbeCall (TypeVariable "Fn" tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> "(" <> intercalate ", " (fmap toQbeParam parametersWithType) <> ")"
-makeCall t v _ = error ("Error: Non-function type in makeCall " ++ show t ++ " calling " ++ show v)
+toQbeCall t v _ = error ("Error: Non-function type in toQbeCall " ++ show t ++ " calling " ++ show v)
 
-toQbeFunParam (name, ty) = toQbeT ty <+> "%" <> name
+toQbeFunParam (name, ty) = toQbeT ty <+> "%" <> fromText name
 
 toQbeParam (e, ty) = toQbeT ty <+> toQbeE e
 
 -- TODO add size for arrays
 toQbeStructParam (name, ty) = toQbeT ty
 
-toQbeE (Variable Local name _) = "%" <> name
-toQbeE (Variable Global name _) = "$" <> name
-toQbeE (Int64 l) = pack (show l)
-toQbeE (Float64 l) = pack (show l)
+toQbeE (Variable Local name _) = "%" <> fromText name
+toQbeE (Variable Global name _) = "$" <> fromText name
+toQbeE (Int64 l) = fromText (pack (show l))
+toQbeE (Float64 l) = fromText (pack (show l))
 toQbeE (Boolean True) = "true"
 toQbeE (Boolean False) = "false"
-toQbeE (String s) = "\"" <> escape s <> "\""
+toQbeE (String s) = "\"" <> fromText (escape s) <> "\""
 toQbeE other = error ("QbeE " ++ show other)
 
 -- TODO check if \0 escpae character works in QBE
@@ -430,7 +431,7 @@ toQbeT (TypeVariable "i32" []) = "w"
 toQbeT (TypeVariable "i64" []) = "l"
 toQbeT (TypeVariable "ptr" []) = "l"
 toQbeT (TypeVariable "auto" []) = error "Error: auto appeared in printing stage"
-toQbeT (TypeVariable s []) = ":" <> s
+toQbeT (TypeVariable s []) = ":" <> fromText s
 toQbeT (TypeVariable s typeParameters) =
     error ("Error: generic type "
         ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
