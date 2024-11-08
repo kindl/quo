@@ -38,26 +38,28 @@ data Statement =
     | For Text Type Expression [Statement]
     | While Expression [Statement]
     | Switch Expression [(Expression, [Statement])]
--- These are not parsed
+    -- These are not parsed, but other statements like While
+    -- are lowered into jumps and labels
     | Label Text
     | Jump Text
     | JumpNonZero Text Text Text
         deriving (Eq, Show, Data, Typeable)
 
--- TODO is it smarter to model x<t> as a seperate access or keep it in Variable and DotAccess?
 data Expression =
     Apply FunctionType Expression [Expression]
+    -- TODO is it smarter to model x<t> as a seperate access or keep it in Variable and DotAccess?
     | Variable Locality Text [Type]
     | DotAccess Expression Text [Type]
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
--- TODO
-    | CastExpression Expression Expression
--- Literals
+    -- TODO could CastExpressions modeled as applying
+    -- Variable _ "cast" [resultType]
+    | CastExpression Type Expression
+    -- Literals
     | Boolean Bool
     | String Text
--- Int32 and Float32 do not need to be seperate literals,
--- only the number has to be narrowed down to the correct size
+    -- Int32 and Float32 do not need to be seperate literals,
+    -- only the number has to be narrowed down to the correct size
     | Float64 Double
     | Int64 Int64
         deriving (Eq, Show, Data, Typeable)
