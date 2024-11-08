@@ -436,6 +436,77 @@ toQbeT (TypeVariable s typeParameters) =
     error ("Error: generic type "
         ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
 
-indent = "    "
 
-(<+>) a b = a <> " " <> b
+
+toCs s = intercalate "\n\n" (fmap toCsS s)
+
+-- Top level
+toCsS (Definition name ty e) =
+    "const" <+> toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
+toCsS (Call e) = toCsE e <> ";"
+toCsS (FunctionDefintion name ty typeParameters parameters statements) =
+    "public static" <+> toCsT ty <+> fromText name <> toCsTypDefParams typeParameters <> "(" <> intercalate ", " (fmap toCsFunParam parameters) <> ")"
+        <//> "{"
+        <//> indent (intercalate "\n" (fmap toCsS statements))
+        <//> "}"
+toCsS (Return (Just e)) = "return" <+> toCsE e <> ";"
+toCsS (Return Nothing) = "return;"
+toCsS (Import _ _) = ""
+toCsS (ExternDefintion _ _ _) = ""
+toCsS (StructDefinition name _ parameters) =
+    "public struct" <+> fromText name
+        <//> "{"
+        <//> indent (intercalate "\n" (fmap toCsStructParam parameters))
+        <//> "}"
+toCsS (If conds Nothing) =
+    intercalate "else" (fmap printIfPart conds)
+toCsS (If conds (Just th)) =
+    intercalate "else" (fmap printIfPart conds ++ [printElsePart th])
+toCsS (While cond sts) = "while" <+> "(" <> toCsE cond <> ")" 
+    <//> "{"
+    <//> indent (intercalate "\n" (fmap toCsS sts))
+    <//> "}"
+toCsS other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
+
+printIfPart (cond, sts) = "if" <+> "(" <> toCsE cond <> ")"
+    <//> "{"
+    <//> indent (intercalate "\n" (fmap toCsS sts))
+    <//> "}"
+
+printElsePart sts = "{"
+    <//> indent (intercalate "\n" (fmap toCsS sts))
+    <//> "}"
+
+toCsFunParam (name, ty) = toCsT ty <+> fromText name
+
+toCsTypDefParams [] = mempty
+toCsTypDefParams tyNames = "<" <> intercalate ", " (fmap fromText tyNames) <> ">"
+
+toCsTypParams [] = mempty
+toCsTypParams typeParameters = "<" <> intercalate ", " (fmap toCsT typeParameters) <> ">"
+
+toCsParam (e, ty) = toCsT ty <+> toCsE e
+
+toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name
+
+toCsE (Variable _ name typeParameters) = fromText name <> toCsTypParams typeParameters
+toCsE (Int64 l) = fromText (pack (show l))
+toCsE (Float64 l) = fromText (pack (show l))
+toCsE (Boolean True) = "true"
+toCsE (Boolean False) = "false"
+toCsE (String s) = "\"" <> fromText (escape s) <> "\""
+toCsE (Apply _ (Variable _ "==" _) [e1, e2]) =
+    toCsE e1 <+> "==" <+> toCsE e2
+toCsE (Apply _ (Variable _ "!=" _) [e1, e2]) =
+    toCsE e1 <+> "!=" <+> toCsE e2
+toCsE (Apply _ e es) = toCsE e <> "(" <> intercalate ", " (fmap toCsE es) <> ")"
+toCsE (DotAccess e name typeParameters) =
+    toCsE e <> "." <> fromText name <> toCsTypParams typeParameters
+toCsE (SquareAccess e1 e2) =
+    toCsE e1 <> "[" <> toCsE e2 <> "]"
+toCsE (ArrayExpression es) =
+    "[" <> intercalate ", " (fmap toCsE es) <> "]"
+toCsE other = error ("CsE " ++ show other)
+
+toCsT (TypeVariable s typeParameters) =
+    fromText s <> toCsTypParams typeParameters
