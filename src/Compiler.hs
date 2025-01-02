@@ -486,7 +486,7 @@ toCsTypParams typeParameters = "<" <> intercalate ", " (fmap toCsT typeParameter
 
 toCsParam (e, ty) = toCsT ty <+> toCsE e
 
-toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name
+toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name <> ";"
 
 toCsE (Variable _ name typeParameters) = fromText name <> toCsTypParams typeParameters
 toCsE (Int64 l) = fromText (pack (show l))
