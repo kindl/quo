@@ -458,9 +458,9 @@ toCsS (StructDefinition name typeParameters parameters) =
         <//> indent (intercalate "\n" (fmap toCsStructParam parameters))
         <//> "}"
 toCsS (If conds Nothing) =
-    intercalate "else" (fmap printIfPart conds)
+    intercalate " else " (fmap printIfPart conds)
 toCsS (If conds (Just th)) =
-    intercalate "else" (fmap printIfPart conds ++ [printElsePart th])
+    intercalate " else " (fmap printIfPart conds ++ [printElsePart th])
 toCsS (While cond sts) = "while" <+> "(" <> toCsE cond <> ")" 
     <//> "{"
     <//> indent (intercalate "\n" (fmap toCsS sts))
