@@ -280,10 +280,16 @@ genericDefinitionIntoSpecialization m =
     let
         f statements@(FunctionDefintion _ _ [] _ _:_) =
             return statements
-        f (FunctionDefintion name returnType functionTypeParameters params body:statements) = do
+        f (FunctionDefintion name returnType typeParameters params body:statements) = do
             typeParameterApplications <- findTypeParameterApplications name
-            lift (putStrLn ("Generating specialization for " ++ show (name, typeParameterApplications)))
-            let concretes = fmap (instantiate name returnType functionTypeParameters params body) typeParameterApplications
+            lift (putStrLn ("Generating specialization for function" ++ show (name, typeParameterApplications)))
+            let concretes = fmap (instantiate name returnType typeParameters params body) typeParameterApplications
+            return (concretes ++ statements)
+        -- Stuct def
+        f (StructDefinition name typeParameters params:statements) = do
+            typeParameterApplications <- findTypeParameterApplications name
+            lift (putStrLn ("Generating specialization for struct" ++ show (name, typeParameterApplications)))
+            let concretes = fmap (instantiateStruct name typeParameters params) typeParameterApplications
             return (concretes ++ statements)
         f s = return s
     in transformBiM f m
@@ -295,6 +301,14 @@ prettyType (TypeVariable n []) = n
 prettyType (TypeVariable "UnsafePointer" [t]) = prettyType t <> "ptr"
 prettyType (TypeVariable "UnsafeMutablePointer" [t]) = prettyType t <> "mutptr"
 prettyType t = error ("Failed pretty " ++ show t)
+
+instantiateStruct name functionTypeParameters params typeParameters =
+    let
+        subst = bind functionTypeParameters typeParameters
+        
+        concreteName = concretize name typeParameters
+        params' = substitute subst params
+    in StructDefinition concreteName [] params'
 
 instantiate name returnType functionTypeParameters params stats typeParameters =
     let
