@@ -452,8 +452,8 @@ toCsS (Return (Just e)) = "return" <+> toCsE e <> ";"
 toCsS (Return Nothing) = "return;"
 toCsS (Import _ _) = ""
 toCsS (ExternDefintion _ _ _) = ""
-toCsS (StructDefinition name _ parameters) =
-    "public struct" <+> fromText name
+toCsS (StructDefinition name typeParameters parameters) =
+    "public struct" <+> fromText name <> toCsTypDefParams typeParameters
         <//> "{"
         <//> indent (intercalate "\n" (fmap toCsStructParam parameters))
         <//> "}"
