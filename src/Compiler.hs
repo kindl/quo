@@ -78,7 +78,6 @@ normalizeTypeNames m =
         f (TypeVariable "long" []) = TypeVariable "i64" []
         f (TypeVariable "uint" []) = TypeVariable "u32" []
         f (TypeVariable "ulong" []) = TypeVariable "u64" []
-        f (TypeVariable "bool" []) = TypeVariable "i32" []
         f x = x
     in transformBi f m
 
