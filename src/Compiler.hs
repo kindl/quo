@@ -329,8 +329,11 @@ autoIntoType m =
                     Just t@(TypeVariable "Fn" ts) -> return (Definition name (last ts) (Apply t e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
+        -- TODO allow generic functions at this point?
         f (FunctionDefintion name returnType [] parameters statements) = do
             addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]))
+            -- TODO add parameter types only locally
+            traverse (uncurry addToEnv) parameters
             statements' <- traverse f statements
             return (FunctionDefintion name returnType [] parameters statements')
         f s@(ExternDefintion name returnType parameters) = do
