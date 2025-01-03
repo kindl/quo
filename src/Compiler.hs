@@ -54,7 +54,6 @@ runTransformations m = do
     return (statements ++ result)
 
 transformations = toM normalizeTypeNames
-    >=> toM makeFunctionsGlobal
     >=> genericVariableIntoSpecialization
     >=> genericDefinitionIntoSpecialization
 
@@ -88,17 +87,9 @@ makeStringsGlobal m =
             n <- fmap (\i -> pack ("s" ++ show i)) newUnique
             ref <- asks (\(Env _ env _ _) -> env)
             lift (modifyIORef' ref (\e -> Definition n (TypeVariable "char" []) s : e))
-            return (Variable Global n [])
+            return (Variable n [])
         f x = return x
     in transformBiM f m
-
--- TODO proper scoping to enable calling local functions
-makeFunctionsGlobal m =
-    let
-        f (Apply ty (Variable Local name tyVars) params) =
-            Apply ty (Variable Global name tyVars) params
-        f x = x
-    in transformBi f m
 
 -- Qbe documentation states:
 -- "Unless the called function does not return a value, a return temporary must be specified, even if it is never used afterwards."
@@ -153,7 +144,7 @@ ssa m =
         f _ = return Nothing
     in rewriteBiM f m
 
-expressionIntoVariable v@(Variable _ _ _) = return (v, [])
+expressionIntoVariable v@(Variable _ _) = return (v, [])
 expressionIntoVariable l@(Int64 _) = return (l, [])
 expressionIntoVariable l@(Boolean _) = return (l, [])
 expressionIntoVariable l@(Float64 _) = return (l, [])
@@ -161,7 +152,7 @@ expressionIntoVariable (String _) = error "Strings should no longer exist at thi
 expressionIntoVariable e = do
     v <- fmap (\i -> pack ("v" ++ show i)) newUnique
     let def = Definition v auto e
-    return (Variable Local v [], [def])
+    return (Variable v [], [def])
 
 {-
 Turn if into jumps and labels
@@ -260,17 +251,17 @@ genericVariableIntoSpecialization m =
 
 genericVariableIntoSpecialization' m =
     let
-        f v@(Variable _ _ []) =
+        f v@(Variable _ []) =
             return v
-        f v@(Variable _ "sizeof" _) =
+        f v@(Variable "sizeof" _) =
             return v
-        f (Apply _ (Variable Global "sizeof" [t]) []) =
+        f (Apply _ (Variable "sizeof" [t]) []) =
             return (Int64 (calculateSize t))
-        f (Variable Global name typeParameters) = do
+        f (Variable name typeParameters) = do
             _ <- ensureInstance name typeParameters
             let concreteName = concretize name typeParameters
             lift (putStrLn ("Ensure specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
-            return (Variable Global concreteName [])
+            return (Variable concreteName [])
         f x = return x
     in transformBiM f m
 
@@ -332,7 +323,7 @@ substitute substitution m =
 -- Turns auto into concrete types
 autoIntoType m =
     let
-        f (Definition name returnType (Apply _ e@(Variable _ v []) es)) = do
+        f (Definition name returnType (Apply _ e@(Variable v []) es)) = do
             ref <- asks (\(Env _ _ tyEnv _) -> tyEnv)
             env <- lift (readIORef ref)
             if v == "!=" || v == "=="
@@ -372,9 +363,9 @@ toQbeP (Definition name ty e) =
 toQbeP s = toQbeS s
 
 -- TODO use type in comparisons for float and similar
-toQbeS (Definition name ty (Apply t (Variable _ "==" _) [e1, e2])) =
+toQbeS (Definition name ty (Apply t (Variable "==" _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2)
-toQbeS (Definition name ty (Apply t (Variable _ "!=" _) [e1, e2])) =
+toQbeS (Definition name ty (Apply t (Variable "!=" _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2)
 -- No variable necessary for void
 toQbeS (Definition _ (TypeVariable "void" []) (Apply ty v parameters)) =
@@ -415,8 +406,9 @@ toQbeParam (e, ty) = toQbeT ty <+> toQbeE e
 -- TODO add size for arrays
 toQbeStructParam (name, ty) = toQbeT ty
 
-toQbeE (Variable Local name _) = "%" <> fromText name
-toQbeE (Variable Global name _) = "$" <> fromText name
+--toQbeE (Variable name _) = "%" <> fromText name
+--toQbeE (Variable name _) = "$" <> fromText name
+toQbeE (Variable name _) = fromText name
 toQbeE (Int64 l) = fromText (pack (show l))
 toQbeE (Float64 l) = fromText (pack (show l))
 toQbeE (Boolean True) = "true"
@@ -505,15 +497,15 @@ toCsParam (e, ty) = toCsT ty <+> toCsE e
 
 toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name <> ";"
 
-toCsE (Variable _ name typeParameters) = fromText name <> toCsTypParams typeParameters
+toCsE (Variable name typeParameters) = fromText name <> toCsTypParams typeParameters
 toCsE (Int64 l) = fromText (pack (show l))
 toCsE (Float64 l) = fromText (pack (show l))
 toCsE (Boolean True) = "true"
 toCsE (Boolean False) = "false"
 toCsE (String s) = "\"" <> fromText (escape s) <> "\""
-toCsE (Apply _ (Variable _ "==" _) [e1, e2]) =
+toCsE (Apply _ (Variable "==" _) [e1, e2]) =
     toCsE e1 <+> "==" <+> toCsE e2
-toCsE (Apply _ (Variable _ "!=" _) [e1, e2]) =
+toCsE (Apply _ (Variable "!=" _) [e1, e2]) =
     toCsE e1 <+> "!=" <+> toCsE e2
 toCsE (Apply _ e es) = toCsE e <> "(" <> intercalate ", " (fmap toCsE es) <> ")"
 toCsE (DotAccess e name typeParameters) =

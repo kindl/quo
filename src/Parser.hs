@@ -47,7 +47,7 @@ expr = ternaryop
 ternaryop = liftA3 makeTernaryOp orop (token "?" *> optional expr) (token ":" *> expr) <|> orop
 
 makeTernaryOp a thenBranch b =
-    Apply auto (Variable Local "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
+    Apply auto (Variable "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orop = leftassoc makeBinaryOp (token "||") andop
@@ -59,14 +59,14 @@ addop = leftassoc makeBinaryOp (token "+" <|> token "-") mulop
 mulop = leftassoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expop
 expop = liftA3 makeBinaryOp unop (token "^") expop <|> unop
 
-makeBinaryOp a opName b = Apply auto (Variable Local opName []) [a, b]
+makeBinaryOp a opName b = Apply auto (Variable opName []) [a, b]
 
 leftassoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
 unop = liftA2 makeUnaryOp (token "!" <|> token "-") prefixexpr <|> prefixexpr
 
-makeUnaryOp opName a = Apply auto (Variable Local opName []) [a]
+makeUnaryOp opName a = Apply auto (Variable opName []) [a]
 
 -- TODO
 templateString = do
@@ -75,7 +75,7 @@ templateString = do
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    return (Apply auto (Variable Local "format" []) [parameter1, parameter2])
+    return (Apply auto (Variable "format" []) [parameter1, parameter2])
 
 templateStringMid = do
     TemplateStringMid s <- next
@@ -106,7 +106,7 @@ squareAccess = fmap (flip SquareAccess) (squares expr)
 -- a<int>(2, 3)
 parameterList = fmap (flip (Apply auto)) (parens (sepByTrailing expr (token ",")))
 
-variable = liftA2 (Variable Local) identifier (option [] typeParameters)
+variable = liftA2 Variable identifier (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer = do

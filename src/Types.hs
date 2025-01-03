@@ -20,11 +20,6 @@ type ReturnType = Type
 
 type FunctionType = Type
 
--- for outputting names with correct sigil
-data Locality =
-    Global
-    | Local
-        deriving (Eq, Show, Data, Typeable)
 
 data Statement =
     Definition Text Type Expression
@@ -48,7 +43,7 @@ data Statement =
 data Expression =
     Apply FunctionType Expression [Expression]
     -- TODO is it smarter to model x<t> as a seperate access or keep it in Variable and DotAccess?
-    | Variable Locality Text [Type]
+    | Variable Text [Type]
     | DotAccess Expression Text [Type]
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
