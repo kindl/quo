@@ -1,0 +1,37 @@
+// Example code for templates
+
+struct Node<T>
+{
+    T element;
+    Pointer<Node<T>> next;
+};
+
+/*
+Node<TResult> Map(Node<TElement> node, Func<TElement, TResult> f)
+{
+    mut Node<TElement> current = node;
+    mut Node<TResult> next = nullptr;
+    while (current != nullptr)
+    {
+        let element = node.element;
+        let result = f(element);
+        next = Node(element, next);
+    }
+
+    return next;
+}
+*/
+
+Node<TResult> Map<TElement, TResult>(Node<TElement> node, Fn<TElement, TResult> f)
+{
+    if (node == nullptr)
+    {
+        return node;
+    }
+    else
+    {
+        auto newElement = f(node.element);
+        auto newNode = Map(node.next, f);
+        return Node(newElement, newNode);
+    }
+}
