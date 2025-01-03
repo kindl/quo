@@ -466,22 +466,24 @@ toCsS (StructDefinition name typeParameters parameters) =
         <//> "{"
         <//> indent (intercalate "\n" (fmap toCsStructParam parameters))
         <//> "}"
-toCsS (If conds Nothing) =
-    intercalate " else " (fmap printIfPart conds)
-toCsS (If conds (Just th)) =
-    intercalate " else " (fmap printIfPart conds ++ [printElsePart th])
+toCsS (If (cond:conds) Nothing) =
+    printIf cond conds
+toCsS (If (cond:conds) (Just th)) =
+    printIf cond conds <//> printElsePart th
 toCsS (While cond sts) = "while" <+> "(" <> toCsE cond <> ")" 
-    <//> "{"
-    <//> indent (intercalate "\n" (fmap toCsS sts))
-    <//> "}"
+    <//> printBlock sts
 toCsS other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
 
-printIfPart (cond, sts) = "if" <+> "(" <> toCsE cond <> ")"
-    <//> "{"
-    <//> indent (intercalate "\n" (fmap toCsS sts))
-    <//> "}"
+printIf cond conds = intercalate "\n" (printIfPart cond : fmap printElseIfPart conds)
 
-printElsePart sts = "{"
+printIfPart (cond, sts) = "if" <+> "(" <> toCsE cond <> ")"
+    <//> printBlock sts
+
+printElseIfPart cond = "else" <+> printIfPart cond
+
+printElsePart sts = "else" <//> printBlock sts
+
+printBlock sts = "{"
     <//> indent (intercalate "\n" (fmap toCsS sts))
     <//> "}"
 
