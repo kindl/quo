@@ -25,7 +25,9 @@ callStatement = do
 
 returnStatement = fmap Return (token "return" *> optional expr)
 
-importStatement = liftA2 Import (token "import" *> identifier) (optional (curlies (sepByTrailing identifier (token ","))))
+importStatement = liftA2 Import
+    (token "import" *> identifier)
+    (optional (curlies (sepByTrailing identifier (token ","))))
 
 externDefinition = do
     _ <- token "extern"
