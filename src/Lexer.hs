@@ -76,12 +76,10 @@ lexemesOrWhitespaceTill p = fmap concat (manyTill' (whitespace <|> lexeme) p)
 special = foldr1 (<|>) (fmap string specials)
 
 -- beware that the order matters. == and => has to come before =
-specials = punctuation ++ operators2 ++ operators1 ++ brackets
+specials = punctuation ++ operators ++ brackets
 
 keywords = ["fn", "if", "else", "return", "let", "true", "false",
     "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto"]
 
 punctuation = [".", ";", ",", "=>"]
-operators2 = [":=", "==", "<=", ">=", "!=", "&&", "||"]
-operators1 = ["!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
 brackets = ["(", ")", "[", "]", "{", "}"]

@@ -11,6 +11,12 @@ data Type = TypeVariable Text [Type]
 
 auto = TypeVariable "auto" []
 
+isOperator x = elem x operators
+
+operators :: [Text]
+operators = ["==", "<=", ">=", "!=", "&&", "||",
+    "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
+
 -- Consider adding (Maybe Expression) for default parameters
 type Parameter = (Text, Type)
 
