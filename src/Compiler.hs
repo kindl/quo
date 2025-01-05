@@ -326,7 +326,7 @@ autoIntoType m =
         f (Definition name returnType (Apply _ e@(Variable v []) es)) = do
             ref <- asks (\(Env _ _ tyEnv _) -> tyEnv)
             env <- lift (readIORef ref)
-            if v == "!=" || v == "=="
+            if isOperator v
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
                 then return (Definition name (TypeVariable "i32" []) (Apply auto e es))
                 else (case lookup v env of
@@ -505,10 +505,10 @@ toCsE (Float64 l) = fromText (pack (show l))
 toCsE (Boolean True) = "true"
 toCsE (Boolean False) = "false"
 toCsE (String s) = "\"" <> fromText (escape s) <> "\""
-toCsE (Apply _ (Variable "==" _) [e1, e2]) =
-    toCsE e1 <+> "==" <+> toCsE e2
-toCsE (Apply _ (Variable "!=" _) [e1, e2]) =
-    toCsE e1 <+> "!=" <+> toCsE e2
+-- Operators
+toCsE (Apply _ (Variable v _) [e1, e2]) | isOperator v =
+    parensToCsE e1 <+> fromText v <+> parensToCsE e2
+-- Non Operator Apply
 toCsE (Apply _ e es) = toCsE e <> "(" <> intercalate ", " (fmap toCsE es) <> ")"
 toCsE (DotAccess e name typeParameters) =
     toCsE e <> "." <> fromText name <> toCsTypParams typeParameters
@@ -518,5 +518,13 @@ toCsE (ArrayExpression es) =
     "[" <> intercalate ", " (fmap toCsE es) <> "]"
 toCsE other = error ("CsE " ++ show other)
 
+parensToCsE e =
+    case e of
+        (Apply _ (Variable v _) _) | isOperator v -> parens (toCsE e)
+        _ -> toCsE e
+
 toCsT (TypeVariable s typeParameters) =
     fromText s <> toCsTypParams typeParameters
+
+parens x = "(" <> x <> ")"
+
