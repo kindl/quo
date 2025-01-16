@@ -38,8 +38,6 @@ typeVariable = do
     ts <- option [] typeParameters
     return (TypeVariable t ts)
 
-optionalType = option auto typ
-
 -- operators
 expr = ternaryop
 

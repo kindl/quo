@@ -84,3 +84,5 @@ ifStatement = do
     return (If (ifBranch:elseIfBranches) elseBranch)
 
 ifPart = token "if" *> liftA2 (,) (parens expr) (curlies statements)
+
+optionalType = option auto typ
