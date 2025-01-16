@@ -52,6 +52,10 @@ whileStatement = do
 forPart =
     liftA3 (\t i e -> (i, t, e)) typ identifier (token "in" *> expr)
 
+-- Consider turning switch into expression
+-- The problem is, that this creates a circle:
+-- Switch is an expression that contains statements
+-- this circle exists for lambdas as well
 switchStatement =
     liftA2 Switch (token "switch" *> parens expr) (curlies (many switchOptions))
 
@@ -59,7 +63,9 @@ switchOptions =
     liftA2 (,) (token "case" *> expr) (token "=>" *> curlies statements)
 
 definition =
-    liftA3 (flip Definition) typ identifier (token "=" *> expr <* token ";")
+    liftA3 (flip Definition) typeOrLet identifier (token "=" *> expr <* token ";")
+
+typeOrLet = (token "let" *> return auto) <|> typ
 
 structDefinition = do
     i <- token "struct" *> identifier
