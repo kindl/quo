@@ -39,30 +39,31 @@ typeVariable = do
     return (TypeVariable t ts)
 
 -- operators
-expr = ternaryop
+expr = conditionalOp
 
 -- a = wasTrue? thenCase : elseCase
-ternaryop = liftA3 makeTernaryOp orop (token "?" *> optional expr) (token ":" *> expr) <|> orop
+conditionalOp =
+    liftA3 makeConditionalOp orOp (token "?" *> optional expr) (token ":" *> expr) <|> orOp
 
-makeTernaryOp a thenBranch b =
+makeConditionalOp a thenBranch b =
     Apply auto (Variable "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
-orop = leftassoc makeBinaryOp (token "||") andop
-andop = leftassoc makeBinaryOp (token "&&") compareop
-compareop = leftassoc makeBinaryOp (token "<" <|> token ">" <|> token "<=" <|> token ">=" <|> token "!=" <|> token "==") addop
+orOp = leftAssoc makeBinaryOp (token "||") andOp
+andOp = leftAssoc makeBinaryOp (token "&&") compareOp
+compareOp = leftAssoc makeBinaryOp (token "<" <|> token ">" <|> token "<=" <|> token ">=" <|> token "!=" <|> token "==") addOp
 
 -- arithmethic operators
-addop = leftassoc makeBinaryOp (token "+" <|> token "-") mulop
-mulop = leftassoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expop
-expop = liftA3 makeBinaryOp unop (token "^") expop <|> unop
+addOp = leftAssoc makeBinaryOp (token "+" <|> token "-") mulOp
+mulOp = leftAssoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expoOp
+expoOp = liftA3 makeBinaryOp unOp (token "^") expoOp <|> unOp
 
 makeBinaryOp a opName b = Apply auto (Variable opName []) [a, b]
 
-leftassoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
+leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
-unop = liftA2 makeUnaryOp (token "!" <|> token "-") prefixexpr <|> prefixexpr
+unOp = liftA2 makeUnaryOp (token "!" <|> token "-") postfixExpression <|> postfixExpression
 
 makeUnaryOp opName a = Apply auto (Variable opName []) [a]
 
@@ -87,9 +88,18 @@ arrayExpression = fmap ArrayExpression (squares (sepByTrailing expr (token ","))
 -- TODO decide if we should be able to parse 2.ToString()
 
 -- Trick to parse left recursive
-prefixexpr = liftA2 (foldl (\e f -> f e))
-    (literal <|> variable <|> parens expr <|> arrayExpression)
+postfixExpression = liftA2 (foldl (\e f -> f e))
+    primaryExpression
     (many (squareAccess <|> dotAcces <|> parameterList))
+
+-- Could just be
+-- `liftA2 (\e f -> f e) postfixExpression parameterList`
+-- but did not work
+statementExpression =
+    postfixExpression
+
+primaryExpression =
+    literal <|> variable <|> parens expr <|> arrayExpression
 
 -- a.b
 dotAcces = liftA2 (\i ts e -> DotAccess e i ts)

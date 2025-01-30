@@ -20,7 +20,7 @@ statements = many (functionDefintion
     <|> whileStatement)
 
 callStatement = do
-    a@(Apply _ _ _) <- prefixexpr <* token ";"
+    a@(Apply _ _ _) <- statementExpression <* token ";"
     return (Call a)
 
 returnStatement = fmap Return (token "return" *> optional expr <* token ";")
