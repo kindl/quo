@@ -6,10 +6,12 @@ import Data.Int(Int64)
 import Data.Data(Data, Typeable)
 
 
-data Type = TypeVariable Text [Type]
+type ArraySize = Int64
+
+data Type = TypeVariable Text [Type] (Maybe ArraySize)
     deriving (Eq, Show, Data, Typeable)
 
-auto = TypeVariable "auto" []
+auto = TypeVariable "auto" [] Nothing
 
 isOperator x = elem x operators
 

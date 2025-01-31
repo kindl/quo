@@ -26,7 +26,8 @@ parse parser str = case lexe str of
 
 next = StateT uncons
 
--- This is for definitions, like functions
+-- This is for definitions, like functions and structs
+-- `struct Example<T> { }`
 typeNameParameters = angles (sepByTrailing identifier (token ","))
 
 typeParameters = angles (sepByTrailing typ (token ","))
@@ -36,7 +37,8 @@ typ = (token "auto" $> auto) <|> typeVariable
 typeVariable = do
     t <- identifier
     ts <- option [] typeParameters
-    return (TypeVariable t ts)
+    arraySize <- optional (squares integer)
+    return (TypeVariable t ts arraySize)
 
 -- operators
 expr = conditionalOp
@@ -81,7 +83,7 @@ templateStringMid = do
     return (String s)
 
 
-literal = integer <|> double <|> string <|> bool
+literal = fmap Int64 integer <|> fmap Float64 double <|> fmap String string <|> bool
 
 arrayExpression = fmap ArrayExpression (squares (sepByTrailing expr (token ",")))
 
@@ -92,11 +94,10 @@ postfixExpression = liftA2 (foldl (\e f -> f e))
     primaryExpression
     (many (squareAccess <|> dotAcces <|> parameterList))
 
--- Could just be
+-- Could be something like
 -- `liftA2 (\e f -> f e) postfixExpression parameterList`
--- but did not work
-statementExpression =
-    postfixExpression
+-- but postfixExpression consumes everything
+statementExpression = postfixExpression
 
 primaryExpression =
     literal <|> variable <|> parens expr <|> arrayExpression
@@ -119,15 +120,15 @@ variable = liftA2 Variable identifier (option [] typeParameters)
 -- helper functions to transform tokens to values
 integer = do
     Integer n <- next
-    return (Int64 n)
+    return n
 
 double = do
     Double n <- next
-    return (Float64 n)
+    return n
 
 string = do
     NonTemplateString s <- next
-    return (String s)
+    return s
 
 bool = (token "true" $> Boolean True) <|> (token "false" $> Boolean False)
 
