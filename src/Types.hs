@@ -33,6 +33,7 @@ data Statement =
     | ExternDefintion Text ReturnType [Parameter]
     | StructDefinition Text [TypeParameter] [Parameter]
     | Call Expression
+    | Assignment Expression Expression
     | If [(Expression, [Statement])] (Maybe [Statement])
     | Return (Maybe Expression)
     | Import Text (Maybe [Text])

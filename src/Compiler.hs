@@ -452,6 +452,7 @@ toCs s = intercalate "\n\n" (fmap toCsS s)
 toCsS (Definition name ty e) =
     "const" <+> toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
 toCsS (Call e) = toCsE e <> ";"
+toCsS (Assignment e1 e2) = toCsE e1 <+> "=" <+> toCsE e2 <> ";"
 toCsS (FunctionDefintion name ty typeParameters parameters statements) =
     "public static" <+> toCsT ty <+> fromText name <> toCsTypDefParams typeParameters <> "(" <> intercalate ", " (fmap toCsFunParam parameters) <> ")"
         <//> "{"

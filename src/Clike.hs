@@ -10,6 +10,7 @@ import Parser
 statements = many (functionDefintion
     <|> externDefinition
     <|> importStatement
+    <|> assignmentStatement
     <|> callStatement
     <|> ifStatement
     <|> switchStatement
@@ -18,6 +19,9 @@ statements = many (functionDefintion
     <|> returnStatement
     <|> forStatement
     <|> whileStatement)
+
+assignmentStatement =
+    liftA2 Assignment statementExpression (token "=" *> expr) <* token ";"
 
 callStatement = do
     a@(Apply _ _ _) <- statementExpression <* token ";"
