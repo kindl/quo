@@ -341,6 +341,12 @@ autoIntoType m =
             traverse (uncurry addToEnv) parameters
             statements' <- traverse f statements
             return (FunctionDefintion name returnType [] parameters statements')
+        f (StructDefinition name [] parameters) = do
+            let returnType = TypeVariable name [] Nothing
+            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]) Nothing)
+            -- TODO add parameter types only locally
+            traverse (uncurry addToEnv) parameters
+            return (StructDefinition name [] parameters)
         f s@(ExternDefintion name returnType parameters) = do
             addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]) Nothing)
             return s
