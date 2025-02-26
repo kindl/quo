@@ -236,7 +236,7 @@ transformWhileIntoJumps m =
 -- * go into all function definitions without type parameters (leafs)
 -- * look for calls of generic functions and uses of generic structs
 -- * instantiate their specialization
---    * substitute all T1 ... Tn with the type parameters    
+--    * substitute all T1 ... Tn with the type parameters
 -- * exchange generic calls with calls to the specialization
 -- * for example alloc<int>() is transformed into alloc__int() and specialization alloc__int is created
 -- * exchange use of generic structs with use of the specialization
@@ -277,7 +277,6 @@ genericDefinitionIntoSpecialization m =
             lift (putStrLn ("Generating specialization for function" ++ show (name, typeParameterApplications)))
             let concretes = fmap (instantiate name returnType typeParameters params body) typeParameterApplications
             return (concretes ++ statements)
-        -- Stuct def
         f (StructDefinition name typeParameters params:statements) = do
             typeParameterApplications <- findTypeParameterApplications name
             lift (putStrLn ("Generating specialization for struct" ++ show (name, typeParameterApplications)))
@@ -297,7 +296,7 @@ prettyType t = error ("Failed pretty " ++ show t)
 instantiateStruct name functionTypeParameters params typeParameters =
     let
         subst = bind functionTypeParameters typeParameters
-        
+
         concreteName = concretize name typeParameters
         params' = substitute subst params
     in StructDefinition concreteName [] params'
@@ -305,7 +304,7 @@ instantiateStruct name functionTypeParameters params typeParameters =
 instantiate name returnType functionTypeParameters params stats typeParameters =
     let
         subst = bind functionTypeParameters typeParameters
-        
+
         concreteName = concretize name typeParameters
         returnType' = substitute subst returnType
         params' = substitute subst params

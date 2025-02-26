@@ -30,7 +30,7 @@ int main()
 {
     auto src = "test.txt";
     auto dest = "test copy.txt";
-    
+
     auto srcFileHandle = fopen(src, "r");
     if (srcFileHandle == nullptr)
     {
@@ -47,7 +47,7 @@ int main()
 
     fclose(srcFileHandle);
     fclose(destFileHandle);
-    
+
     puts("Done");
 
     return 0;

@@ -28,7 +28,7 @@ infixr 6 <+>
 infixr 6 <//>
 
 (<//>) = Newline
-(<+>) l1 l2 = l1 <> " " <> l2 
+(<+>) l1 l2 = l1 <> " " <> l2
 
 fromText = Line
 
