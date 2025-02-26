@@ -68,7 +68,7 @@ templateString = do
 
 templateStringPart = fmap TemplateStringMid (takeWhile (\x -> x /= '"' && x /= '{'))
 
-expressionPart = string "{" *> lexemesOrWhitespaceTill (char '}')
+expressionPart = char '{' *> lexemesOrWhitespaceTill (char '}')
 
 lexemesOrWhitespaceTill p = fmap concat (manyTill' (whitespace <|> lexeme) p)
 
@@ -79,7 +79,7 @@ special = foldr1 (<|>) (fmap string specials)
 specials = punctuation ++ operators ++ brackets
 
 keywords = ["fn", "if", "else", "return", "let", "true", "false",
-    "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto"]
+    "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto", "module"]
 
 punctuation = [".", ";", ",", "=>"]
 brackets = ["(", ")", "[", "]", "{", "}"]

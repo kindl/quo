@@ -29,6 +29,9 @@ type ReturnType = Type
 type FunctionType = Type
 
 
+data Module = Module Text [Statement]
+    deriving (Eq, Show, Data, Typeable)
+
 data Statement =
     Definition Text Type Expression
     | FunctionDefintion Text ReturnType [TypeParameter] [Parameter] [Statement]

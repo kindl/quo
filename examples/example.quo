@@ -1,6 +1,8 @@
 // TODO opaque types like
 // extern struct FILE;
 
+module example;
+
 extern int puts(UnsafePointer<char> str);
 extern UnsafeMutablePointer<FILE> fopen(UnsafePointer<char> filename, UnsafePointer<char> mode);
 extern int fgetc(UnsafeMutablePointer<FILE> stream);

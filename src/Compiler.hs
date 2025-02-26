@@ -42,16 +42,16 @@ findTypeParameterApplications name = do
     return [found | (n, found) <- env, n == name]
 
 -- Transformations
-runTransformations m = do
+runTransformations (Module m statements) = do
     i <- newIORef 0
     env <- newIORef []
     tyEnv <- newIORef []
     typeParameterApplications <- newIORef []
 
-    result <- runReaderT (transformations m) (Env i env tyEnv typeParameterApplications)
-    statements <- readIORef env
+    result <- runReaderT (transformations statements) (Env i env tyEnv typeParameterApplications)
+    instances <- readIORef env
 
-    return (statements ++ result)
+    return (Module m (instances ++ result))
 
 transformations = toM normalizeTypeNames
     >=> genericVariableIntoSpecialization
@@ -454,11 +454,11 @@ toQbeT (TypeVariable s typeParameters Nothing) =
 
 
 
-toCs s = intercalate "\n\n" (fmap toCsS s)
+toCs (Module _ s) = intercalate "\n\n" (fmap toCsS s)
 
 
 toCsS (Definition name ty e) =
-    "const" <+> toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
+    toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
 toCsS (Call e) = toCsE e <> ";"
 toCsS (Assignment e1 e2) = toCsE e1 <+> "=" <+> toCsE e2 <> ";"
 toCsS (FunctionDefintion name ty typeParameters parameters statements) =
@@ -533,11 +533,13 @@ parensToCsE e =
         (Apply _ (Variable v _) _) | isOperator v -> parens (toCsE e)
         _ -> toCsE e
 
-toCsT (TypeVariable s typeParameters arraySize) =
-    fromText s <> toCsTypParams typeParameters <>
-        case arraySize of
-            Nothing -> ""
-            Just _ -> "[]"
+toCsT t@(TypeVariable s typeParameters arraySize) =
+    if t == auto
+        then "var"
+        else fromText s <> toCsTypParams typeParameters <>
+            case arraySize of
+                Nothing -> ""
+                Just _ -> "[]"
 
 parens x = "(" <> x <> ")"
 
