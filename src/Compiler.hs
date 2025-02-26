@@ -381,7 +381,9 @@ toQbeS (Definition name returnType (Apply ty v parameters)) =
 toQbeS (Definition name ty e) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> toQbeE e)
 toQbeS (FunctionDefintion name ty _ parameters statements) =
-    "export function" <+> toQbeT ty <+> "$" <> fromText name <> "(" <> intercalate ", " (fmap toQbeFunParam parameters) <> ")" <+> "{"
+    "export function" <+> toQbeT ty <+> "$" <> fromText name
+    <> parens (intercalate ", " (fmap toQbeFunParam parameters))
+    <+> "{"
     <//> "@start"
     <//> intercalate "\n" (fmap toQbeS statements)
     <//> "}"
@@ -402,7 +404,7 @@ toQbeS other = error ("Error: QbeS Following statement appearedd in printing sta
 toQbeCall (TypeVariable "Fn" tys Nothing) v parameters =
     let
         parametersWithType = zip parameters tys
-    in "call" <+> toQbeE v <> "(" <> intercalate ", " (fmap toQbeParam parametersWithType) <> ")"
+    in "call" <+> toQbeE v <> parens (intercalate ", " (fmap toQbeParam parametersWithType))
 toQbeCall t v _ = error ("Error: Non-function type in toQbeCall " ++ show t ++ " calling " ++ show v)
 
 toQbeFunParam (name, ty) = toQbeT ty <+> "%" <> fromText name
@@ -460,14 +462,15 @@ toCsS (Definition name ty e) =
 toCsS (Call e) = toCsE e <> ";"
 toCsS (Assignment e1 e2) = toCsE e1 <+> "=" <+> toCsE e2 <> ";"
 toCsS (FunctionDefintion name ty typeParameters parameters statements) =
-    "public static" <+> toCsT ty <+> fromText name <> toCsTypDefParams typeParameters <> "(" <> intercalate ", " (fmap toCsFunParam parameters) <> ")"
+    "public static" <+> toCsT ty <+> fromText name <> toCsTypDefParams typeParameters
+        <> parens (intercalate ", " (fmap toCsFunParam parameters))
         <//> "{"
         <//> indent (intercalate "\n" (fmap toCsS statements))
         <//> "}"
 toCsS (Return (Just e)) = "return" <+> toCsE e <> ";"
 toCsS (Return Nothing) = "return;"
 toCsS (Import _ _) = ""
-toCsS (ExternDefintion _ _ _) = ""
+toCsS (ExternDefintion name returnType parameters) = "extern" <+> toCsT returnType <+> fromText name <> parens (intercalate ", " (fmap toCsFunParam parameters)) <>";"
 toCsS (StructDefinition name typeParameters parameters) =
     "public struct" <+> fromText name <> toCsTypDefParams typeParameters
         <//> "{"
@@ -477,13 +480,13 @@ toCsS (If (cond:conds) Nothing) =
     printIf cond conds
 toCsS (If (cond:conds) (Just th)) =
     printIf cond conds <//> printElsePart th
-toCsS (While cond sts) = "while" <+> "(" <> toCsE cond <> ")" 
+toCsS (While cond sts) = "while" <+> parens (toCsE cond)
     <//> printBlock sts
 toCsS other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
 
 printIf cond conds = intercalate "\n" (printIfPart cond : fmap printElseIfPart conds)
 
-printIfPart (cond, sts) = "if" <+> "(" <> toCsE cond <> ")"
+printIfPart (cond, sts) = "if" <+> parens (toCsE cond)
     <//> printBlock sts
 
 printElseIfPart cond = "else" <+> printIfPart cond
@@ -516,7 +519,7 @@ toCsE (String s) = "\"" <> fromText (escape s) <> "\""
 toCsE (Apply _ (Variable v _) [e1, e2]) | isOperator v =
     parensToCsE e1 <+> fromText v <+> parensToCsE e2
 -- Non Operator Apply
-toCsE (Apply _ e es) = toCsE e <> "(" <> intercalate ", " (fmap toCsE es) <> ")"
+toCsE (Apply _ e es) = toCsE e <> parens (intercalate ", " (fmap toCsE es))
 toCsE (DotAccess e name typeParameters) =
     toCsE e <> "." <> fromText name <> toCsTypParams typeParameters
 toCsE (SquareAccess e1 e2) =
