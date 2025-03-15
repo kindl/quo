@@ -7,6 +7,9 @@ import Types
 import Parser
 
 
+moduleDefinition =
+    liftA2 Module (token "module" *> identifier) statements
+
 statements = many (functionDefintion
     <|> externDefinition
     <|> importStatement
