@@ -79,7 +79,8 @@ special = foldr1 (<|>) (fmap string specials)
 specials = punctuation ++ operators ++ brackets
 
 keywords = ["fn", "if", "else", "return", "let", "true", "false",
-    "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto", "module"]
+    "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto",
+    "module", "import"]
 
 punctuation = [".", ";", ",", "=>"]
 brackets = ["(", ")", "[", "]", "{", "}"]
