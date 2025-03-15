@@ -1,5 +1,7 @@
 // Example code for templates
 
+module linkedList;
+
 struct Node<T>
 {
     T element;
@@ -22,16 +24,17 @@ Node<TResult> Map(Node<TElement> node, Func<TElement, TResult> f)
 }
 */
 
-Node<TResult> Map<TElement, TResult>(Node<TElement> node, Fn<TElement, TResult> f)
+Pointer<Node<TResult>> Map<TElement, TResult>(Pointer<Node<TElement>> node, Fn<TElement, TResult> f)
 {
-    if (node == nullptr)
+    if (node == null)
     {
-        return node;
+        return null;
     }
     else
     {
-        auto newElement = f(node.element);
-        auto newNode = Map(node.next, f);
-        return Node(newElement, newNode);
+        let newElement = f(node.value.element);
+        let newNode = Map(node.value.next, f);
+        // TODO this probably need to move ownership
+        return makePointer<Node<TResult>>(newElement, newNode);
     }
 }
