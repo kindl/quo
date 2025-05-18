@@ -69,7 +69,6 @@ unOp = liftA2 makeUnaryOp (token "!" <|> token "-") postfixExpression <|> postfi
 
 makeUnaryOp opName a = Apply auto (Variable opName []) [a]
 
--- TODO
 templateString = do
     TemplateStringBegin <- next
     stringsAndExpressions <- many (eitherP templateStringMid expr)

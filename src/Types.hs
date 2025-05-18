@@ -80,4 +80,5 @@ data Token =
     | TemplateStringBegin
     | TemplateStringMid Text
     | TemplateStringEnd
+    | Whitespace
         deriving (Eq, Show, Data, Typeable)

@@ -5,39 +5,47 @@ import Prelude hiding (takeWhile)
 import Data.Char(isSpace, isAlpha, isAlphaNum)
 import Types
 import Control.Applicative((<|>), liftA2)
-import Data.Attoparsec.Combinator(manyTill', many')
+import Data.Attoparsec.Combinator(manyTill', many', eitherP)
 import Data.Attoparsec.Text(takeWhile, takeWhile1, string, char, satisfy,
     signed, decimal, anyChar, parseOnly, match)
 import qualified Data.Text as Text
 
 
-lexe str = parseOnly (goToTheEnd str lexemesOrWhitespace) str
+lexe str = parseOnly (goToTheEnd str lexemes) str
 
 goToTheEnd input p = do
     (parsed, result) <- match p
     let (lineNumber, characterNumber) = Text.foldl' advance (1, 1) parsed
     if Text.length parsed == Text.length input
-        then return result
-        else fail ("Parsed failed at " ++ show lineNumber ++ ":" ++ show characterNumber)
+        then return (filter (not . isWhitespace) result)
+        else fail ("Lexer failed at " ++ show lineNumber ++ ":" ++ show characterNumber)
 
-lexemesOrWhitespace = fmap concat (many' (whitespace <|> lexeme))
+lexemes = fmap collapse (many' lexeme)
 
+isWhitespace Whitespace = True
+isWhitespace _ = False
 
 advance (l, _) '\n' = (l + 1, 1)
 advance (l, c) _ = (l, c + 1)
 
-whitespace =  ([] <$ takeWhile1 isSpace) <|> ([] <$ multilineComment) <|> ([] <$ singlelineComment)
+whitespace = Whitespace <$ (takeWhile1 isSpace <|> multilineComment <|> singlelineComment)
 
-multilineComment = string "/*" *> manyTill' anyChar (string "*/")
+multilineComment = fmap Text.pack (string "/*" *> manyTill' anyChar (string "*/"))
 
 singlelineComment = string "//" *> takeWhile (/='\n')
 
 -- token
-lexeme = templateString
-    <|> fmap (return . NonTemplateString) nonTemplateString
-    <|> fmap (return . Integer) (signed decimal)
-    <|> fmap (return . Special) special
-    <|> fmap (return . identifierOrKeyword) identifier
+lexeme = eitherP (whitespace <|> singleLexeme) templateString
+
+collapse = foldr collapseAux []
+
+collapseAux (Left l) es = l : es
+collapseAux (Right r) es = r ++ es
+
+singleLexeme = fmap NonTemplateString nonTemplateString
+    <|> fmap Integer (signed decimal)
+    <|> fmap Special special
+    <|> fmap identifierOrKeyword identifier
 
 -- values
 identifier = do
@@ -49,7 +57,7 @@ identifierOrKeyword i =
     if elem i keywords then Special i else Identifier i
 
 nonTemplateString =
-    char '\"' *> fmap Text.concat (many' (takeWhile1 (\x -> x /='"' && x /= '\\') <|> fmap Text.singleton escapeSequence)) <* char '\"'
+    char '\"' *> escapedString (\x -> x /= '\"' && x /= '\\') <* char '\"'
 
 escapeSequence = char '\\' *>
     (char '\\' <|> char '\"'
@@ -58,19 +66,17 @@ escapeSequence = char '\\' *>
     <|> char 't' *> return '\t'
     <|> char '0' *> return '\0')
 
--- TODO lexing inside template string
 templateString = do
     _ <- string "$\""
-    begin <- templateStringPart
-    midParts <- many' (liftA2 (\x y -> x ++ [y]) expressionPart templateStringPart)
+    midParts <- many' (eitherP templateStringPart expressionPart)
     _ <- char '"'
-    return (TemplateStringBegin : begin : concat midParts ++ [TemplateStringEnd])
+    return (TemplateStringBegin : collapse midParts ++ [TemplateStringEnd])
 
-templateStringPart = fmap TemplateStringMid (takeWhile (\x -> x /= '"' && x /= '{'))
+templateStringPart = fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x == '\\' && x /= '{'))
 
-expressionPart = char '{' *> lexemesOrWhitespaceTill (char '}')
+escapedString p = fmap Text.concat (many' (takeWhile1 p <|> fmap Text.singleton escapeSequence))
 
-lexemesOrWhitespaceTill p = fmap concat (manyTill' (whitespace <|> lexeme) p)
+expressionPart = char '{' *> fmap collapse (manyTill' lexeme (char '}'))
 
 -- special characters
 special = foldr1 (<|>) (fmap string specials)

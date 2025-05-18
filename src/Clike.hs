@@ -63,6 +63,10 @@ forPart =
 -- The problem is, that this creates a circle:
 -- Switch is an expression that contains statements
 -- this circle exists for lambdas as well
+-- Optional: only allow where switch can be easily turned into statements
+-- for example:
+-- let v = case { ... } can be turned into t v; case { ... -> v = expr }
+-- return case { ... } can be turned into case { ... -> return expr }
 switchStatement =
     liftA2 Switch (token "switch" *> parens expr) (curlies (many switchOptions))
 
