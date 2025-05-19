@@ -2,11 +2,11 @@
 module Types where
 
 import Data.Text(Text)
-import Data.Int(Int64)
+import Data.Int(Int64, Int32)
 import Data.Data(Data, Typeable)
 
 
-type ArraySize = Int64
+type ArraySize = Int32
 
 data Type = TypeVariable Text [Type] (Maybe ArraySize)
     deriving (Eq, Show, Data, Typeable)
@@ -62,23 +62,14 @@ data Expression =
     -- TODO could CastExpressions modeled as applying
     -- Variable _ "cast" [resultType]
     | CastExpression Type Expression
-    -- Literals
-    | Boolean Bool
-    | String Text
-    -- Int32 and Float32 do not need to be seperate literals,
-    -- only the number has to be narrowed down to the correct size
-    | Float64 Double
-    | Int64 Int64
+    | Literal Literal
         deriving (Eq, Show, Data, Typeable)
 
-data Token =
-    Identifier Text
-    | Integer Int64
-    | Double Double
-    | Special Text
-    | NonTemplateString Text
-    | TemplateStringBegin
-    | TemplateStringMid Text
-    | TemplateStringEnd
-    | Whitespace
+data Literal =
+    StringLiteral Text
+    | Bool Bool
+    | Int32 Int32
+    | Int64 Int64
+    | Float32 Float
+    | Float64 Double
         deriving (Eq, Show, Data, Typeable)

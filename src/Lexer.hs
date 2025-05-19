@@ -1,14 +1,32 @@
-{-# LANGUAGE OverloadedStrings #-}
-module Lexer(lexe) where
+{-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
+module Lexer(lexe, Token(..)) where
 
 import Prelude hiding (takeWhile)
-import Data.Char(isSpace, isAlpha, isAlphaNum)
-import Types
-import Control.Applicative((<|>), liftA2)
+import Data.Char(isSpace, isAlpha, isAlphaNum, isDigit)
+import Types(operators)
+import Control.Applicative((<|>), optional)
 import Data.Attoparsec.Combinator(manyTill', many', eitherP)
 import Data.Attoparsec.Text(takeWhile, takeWhile1, string, char, satisfy,
-    signed, decimal, anyChar, parseOnly, match)
+    anyChar, parseOnly, match, option)
 import qualified Data.Text as Text
+import Data.Text(Text)
+import Data.Int(Int64, Int32)
+import Data.Data(Data, Typeable)
+
+
+data Token =
+    Identifier Text
+    | Int Int32
+    | Long Int64
+    | Double Double
+    | Float Float
+    | Special Text
+    | String Text
+    | TemplateStringBegin
+    | TemplateStringMid Text
+    | TemplateStringEnd
+    | Whitespace
+        deriving (Eq, Show, Data, Typeable)
 
 
 lexe str = parseOnly (goToTheEnd str lexemes) str
@@ -42,10 +60,42 @@ collapse = foldr collapseAux []
 collapseAux (Left l) es = l : es
 collapseAux (Right r) es = r ++ es
 
-singleLexeme = fmap NonTemplateString nonTemplateString
-    <|> fmap Integer (signed decimal)
+singleLexeme = fmap String nonTemplateString
     <|> fmap Special special
     <|> fmap identifierOrKeyword identifier
+    <|> numberToken
+
+digits = takeWhile1 isDigit
+
+digitsWithOptionalSign = do
+    s <- option "" (string "+" <> string "-'")
+    ds <- digits
+    return (s <> ds)
+
+exponentPart = do
+    e <- char 'E' <> char 'e'
+    ds <- digitsWithOptionalSign
+    return (Text.cons e ds)
+
+dotPart = do
+    d <- char '.'
+    ds <- digits
+    return (Text.cons d ds)
+
+specifier = char 'f' <|> char 'L'
+
+numberToken = do
+    digs <- digitsWithOptionalSign
+    dot <- option "" dotPart
+    expo <- option "" exponentPart
+    spec <- optional specifier
+    let combined = Text.unpack (digs <> dot <> expo)
+
+    return (case spec of
+        Nothing -> if dot == "" then Int (read combined) else Double (read combined)
+        Just 'f' -> Float (read combined)
+        Just 'L' -> Long (read combined)
+        _ -> error ("Unknown spec " ++ show spec))
 
 -- values
 identifier = do

@@ -83,7 +83,7 @@ normalizeTypeNames m =
 -- Create a new variable, put the string into global definitions and swap
 makeStringsGlobal m =
     let
-        f s@(String _) = do
+        f s@(Literal (StringLiteral _)) = do
             n <- fmap (\i -> pack ("s" ++ show i)) newUnique
             ref <- asks (\(Env _ env _ _) -> env)
             lift (modifyIORef' ref (\e -> Definition n (TypeVariable "char" [] Nothing) s : e))
@@ -145,10 +145,8 @@ ssa m =
     in rewriteBiM f m
 
 expressionIntoVariable v@(Variable _ _) = return (v, [])
-expressionIntoVariable l@(Int64 _) = return (l, [])
-expressionIntoVariable l@(Boolean _) = return (l, [])
-expressionIntoVariable l@(Float64 _) = return (l, [])
-expressionIntoVariable (String _) = error "Strings should no longer exist at this stage"
+expressionIntoVariable (Literal (StringLiteral _)) = error "Strings should no longer exist at this stage"
+expressionIntoVariable l@(Literal _) = return (l, [])
 expressionIntoVariable e = do
     v <- fmap (\i -> pack ("v" ++ show i)) newUnique
     let def = Definition v auto e
@@ -256,7 +254,7 @@ genericVariableIntoSpecialization' m =
         f v@(Variable "sizeof" _) =
             return v
         f (Apply _ (Variable "sizeof" [t]) []) =
-            return (Int64 (calculateSize t))
+            return (Literal (Int64 (calculateSize t)))
         f (Variable name typeParameters) = do
             _ <- ensureInstance name typeParameters
             let concreteName = concretize name typeParameters
@@ -417,12 +415,14 @@ toQbeStructParam (name, ty) = toQbeT ty
 --toQbeE (Variable name _) = "%" <> fromText name
 --toQbeE (Variable name _) = "$" <> fromText name
 toQbeE (Variable name _) = fromText name
-toQbeE (Int64 l) = fromText (pack (show l))
-toQbeE (Float64 l) = fromText (pack (show l))
-toQbeE (Boolean True) = "true"
-toQbeE (Boolean False) = "false"
-toQbeE (String s) = "\"" <> fromText (escape s) <> "\""
+toQbeE (Literal l) = toQbeL l
 toQbeE other = error ("QbeE " ++ show other)
+
+toQbeL (Int64 l) = fromText (pack (show l))
+toQbeL (Float64 l) = fromText (pack (show l))
+toQbeL (Bool True) = "true"
+toQbeL (Bool False) = "false"
+toQbeL (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 
 -- TODO check if \0 escpae character works in QBE
 escape = replace "\0" "\\0"
@@ -510,11 +510,7 @@ toCsParam (e, ty) = toCsT ty <+> toCsE e
 toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name <> ";"
 
 toCsE (Variable name typeParameters) = fromText name <> toCsTypParams typeParameters
-toCsE (Int64 l) = fromText (pack (show l))
-toCsE (Float64 l) = fromText (pack (show l))
-toCsE (Boolean True) = "true"
-toCsE (Boolean False) = "false"
-toCsE (String s) = "\"" <> fromText (escape s) <> "\""
+toCsE (Literal l) = toCsL l
 -- Operators
 toCsE (Apply _ (Variable v _) [e1, e2]) | isOperator v =
     parensToCsE e1 <+> fromText v <+> parensToCsE e2
@@ -527,6 +523,14 @@ toCsE (SquareAccess e1 e2) =
 toCsE (ArrayExpression es) =
     "[" <> intercalate ", " (fmap toCsE es) <> "]"
 toCsE other = error ("CsE " ++ show other)
+
+toCsL (Int32 l) = fromText (pack (show l))
+toCsL (Int64 l) = fromText (pack (show l)) <> "L"
+toCsL (Float32 l) = fromText (pack (show l)) <> "f"
+toCsL (Float64 l) = fromText (pack (show l))
+toCsL (Bool True) = "true"
+toCsL (Bool False) = "false"
+toCsL (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 
 parensToCsE e =
     case e of

@@ -9,7 +9,7 @@ import Data.Attoparsec.Combinator(eitherP, option)
 import Control.Monad.Trans.State.Strict(StateT(..), runStateT)
 import Types
 import qualified Data.Text.IO as Text
-import Lexer(lexe)
+import Lexer(lexe, Token(..))
 
 
 -- TODO merge common parts in Golike and Clike
@@ -79,10 +79,14 @@ templateString = do
 
 templateStringMid = do
     TemplateStringMid s <- next
-    return (String s)
+    return (Literal (StringLiteral s))
 
 
-literal = fmap Int64 integer <|> fmap Float64 double <|> fmap String string <|> bool
+literal = fmap Int32 integer
+    <|> fmap Int64 long
+    <|> fmap Float64 double
+    <|> fmap StringLiteral string
+    <|> bool
 
 arrayExpression = fmap ArrayExpression (squares (sepByTrailing expr (token ",")))
 
@@ -99,7 +103,7 @@ postfixExpression = liftA2 (foldl (\e f -> f e))
 statementExpression = postfixExpression
 
 primaryExpression =
-    literal <|> variable <|> parens expr <|> arrayExpression
+    fmap Literal literal <|> variable <|> parens expr <|> arrayExpression
 
 -- a.b
 dotAcces = liftA2 (\i ts e -> DotAccess e i ts)
@@ -118,7 +122,11 @@ variable = liftA2 Variable identifier (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer = do
-    Integer n <- next
+    Int n <- next
+    return n
+
+long = do
+    Long n <- next
     return n
 
 double = do
@@ -126,10 +134,10 @@ double = do
     return n
 
 string = do
-    NonTemplateString s <- next
+    String s <- next
     return s
 
-bool = (token "true" $> Boolean True) <|> (token "false" $> Boolean False)
+bool = (token "true" $> Bool True) <|> (token "false" $> Bool False)
 
 identifier = do
     Identifier i <- next
