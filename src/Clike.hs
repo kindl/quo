@@ -1,14 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Clike where
 
-import Control.Applicative((<|>), optional, many, liftA2, liftA3)
+import Control.Applicative((<|>), optional, many, liftA3)
 import Data.Attoparsec.Combinator(option)
 import Types
 import Parser
 
 
-moduleDefinition =
-    liftA2 Module (token "module" *> identifier <* token ";") statements
+moduleDefinition = do
+    m <- option "main" (token "module" *> identifier <* token ";")
+    s <- statements
+    return (Module m s)
 
 statements = many (functionDefintion
     <|> externDefinition
@@ -27,7 +29,7 @@ assignmentStatement =
     liftA2 Assignment statementExpression (token "=" *> expr) <* token ";"
 
 callStatement = do
-    a@(Apply _ _ _) <- statementExpression <* token ";"
+    a@(Apply _ _) <- statementExpression <* token ";"
     return (Call a)
 
 returnStatement = fmap Return (token "return" *> optional expr <* token ";")

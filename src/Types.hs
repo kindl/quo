@@ -26,9 +26,6 @@ type TypeParameter = Text
 
 type ReturnType = Type
 
-type FunctionType = Type
-
-
 data Module = Module Text [Statement]
     deriving (Eq, Show, Data, Typeable)
 
@@ -52,9 +49,14 @@ data Statement =
     | JumpNonZero Text Text Text
         deriving (Eq, Show, Data, Typeable)
 
+-- TODO find the best option to model generics
+-- Currently the type parameters are part of Variable and DotAccess
+-- It could instead be modeled as a seperate access constructor GenericAccess Expression [Type]
+-- or could become part of a Name, so we would have Variable Name and DotAcess Expression Name.
+-- Putting it into the name appears clean, but it implies that we have to differentiate between
+-- defining names, which only have type variable parameters and names being used, which have more complex types
 data Expression =
-    Apply FunctionType Expression [Expression]
-    -- TODO is it smarter to model x<t> as a seperate access or keep it in Variable and DotAccess?
+    Apply Expression [Expression]
     | Variable Text [Type]
     | DotAccess Expression Text [Type]
     | SquareAccess Expression Expression

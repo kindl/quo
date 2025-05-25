@@ -1,14 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Golike where
 
-import Control.Applicative((<|>), optional, many, liftA2, liftA3)
+import Control.Applicative((<|>), optional, many, liftA3)
 import Data.Attoparsec.Combinator(option)
 import Types
 import Parser
 
 
-moduleDefinition =
-    liftA2 Module (token "module" *> identifier) statements
+moduleDefinition = do
+    m <- option "main" (token "module" *> identifier)
+    s <- statements
+    return (Module m s)
 
 statements = many (functionDefintion
     <|> externDefinition
@@ -27,7 +29,7 @@ assignmentStatement =
     liftA2 Assignment statementExpression (token "=" *> expr)
 
 callStatement = do
-    a@(Apply _ _ _) <- statementExpression
+    a@(Apply _ _) <- statementExpression
     return (Call a)
 
 returnStatement = fmap Return (token "return" *> optional expr)

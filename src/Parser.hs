@@ -5,7 +5,7 @@ import Control.Applicative
 import Data.List(uncons)
 import Data.Either(lefts, rights)
 import Data.Functor(($>))
-import Data.Attoparsec.Combinator(eitherP, option)
+import Data.Attoparsec.Combinator(eitherP, option, sepBy)
 import Control.Monad.Trans.State.Strict(StateT(..), runStateT)
 import Types
 import qualified Data.Text.IO as Text
@@ -48,7 +48,7 @@ conditionalOp =
     liftA3 makeConditionalOp orOp (token "?" *> optional expr) (token ":" *> expr) <|> orOp
 
 makeConditionalOp a thenBranch b =
-    Apply auto (Variable "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
+    Apply (Variable "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp = leftAssoc makeBinaryOp (token "||") andOp
@@ -60,14 +60,14 @@ addOp = leftAssoc makeBinaryOp (token "+" <|> token "-") mulOp
 mulOp = leftAssoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expoOp
 expoOp = liftA3 makeBinaryOp unOp (token "^") expoOp <|> unOp
 
-makeBinaryOp a opName b = Apply auto (Variable opName []) [a, b]
+makeBinaryOp a opName b = Apply (Variable opName []) [a, b]
 
 leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
 unOp = liftA2 makeUnaryOp (token "!" <|> token "-") postfixExpression <|> postfixExpression
 
-makeUnaryOp opName a = Apply auto (Variable opName []) [a]
+makeUnaryOp opName a = Apply (Variable opName []) [a]
 
 templateString = do
     TemplateStringBegin <- next
@@ -75,7 +75,7 @@ templateString = do
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    return (Apply auto (Variable "format" []) [parameter1, parameter2])
+    return (Apply (Variable "format" []) [parameter1, parameter2])
 
 templateStringMid = do
     TemplateStringMid s <- next
@@ -116,7 +116,7 @@ squareAccess = fmap (flip SquareAccess) (squares expr)
 
 -- a(2, 3)
 -- a<int>(2, 3)
-parameterList = fmap (flip (Apply auto)) (parens (sepByTrailing expr (token ",")))
+parameterList = fmap (flip Apply) (parens (sepByTrailing expr (token ",")))
 
 variable = liftA2 Variable identifier (option [] typeParameters)
 
@@ -152,7 +152,4 @@ squares p = token "[" *> p <* token "]"
 curlies p = token "{" *> p <* token "}"
 angles p = token "<" *> p <* token ">"
 
-sepBy1Trailing p sep =
-    liftA2 (:) p (many (sep *> p)) <* optional sep
-
-sepByTrailing p sep = sepBy1Trailing p sep <|> return []
+sepByTrailing p sep = sepBy p sep <* optional sep
