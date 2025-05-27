@@ -61,8 +61,8 @@ transformations = toM normalizeTypeNames
     >=> genericDefinitionIntoSpecialization
 
     >=> makeStringsGlobal
-    >=> transformIfIntoJumps
-    >=> transformWhileIntoJumps
+    -- >=> transformIfIntoJumps
+    -- >=> transformWhileIntoJumps
     >=> transformCallIntoDef
     >=> ssa
     >=> autoIntoType
@@ -85,9 +85,11 @@ makeStringsGlobal m =
     let
         f s@(Literal (StringLiteral _)) = do
             n <- fmap (\i -> pack ("s" ++ show i)) newUnique
+            -- TODO add size
+            let name = Name n (TypeVariable "char" [] Nothing)
             ref <- asks (\(Env _ env _ _) -> env)
-            lift (modifyIORef' ref (\e -> Definition n (TypeVariable "char" [] Nothing) s : e))
-            return (Variable n [])
+            lift (modifyIORef' ref (\e -> Definition name s : e))
+            return (Variable name [])
         f x = return x
     in transformBiM f m
 
@@ -98,7 +100,7 @@ transformCallIntoDef m =
     let
         f (Call e) = do
             v <- fmap (\i -> pack ("v" ++ show i)) newUnique
-            return (Definition v auto e)
+            return (Definition (Name v auto) e)
         f x = return x
     in transformBiM f m
 
@@ -129,13 +131,13 @@ ArrayExpression [Expression]
 -}
 ssa m =
     let
-        f (Definition v t (Apply e es) : statements) = do
+        f (Definition (Name v t) (Apply e es) : statements) = do
             (e', defs1) <- expressionIntoVariable e
             pairs <- traverse expressionIntoVariable es
             let (es', defs2) = unzip pairs
             return (case defs1 ++ concat defs2 of
                 [] -> Nothing
-                defs -> Just (defs ++ Definition v t (Apply e' es') : statements))
+                defs -> Just (defs ++ Definition (Name v t) (Apply e' es') : statements))
         f (Return (Just e) : statements) = do
             (e', defs) <- expressionIntoVariable e
             return (case defs of
@@ -149,8 +151,9 @@ expressionIntoVariable (Literal (StringLiteral _)) = error "Strings should no lo
 expressionIntoVariable l@(Literal _) = return (l, [])
 expressionIntoVariable e = do
     v <- fmap (\i -> pack ("v" ++ show i)) newUnique
-    let def = Definition v auto e
-    return (Variable v [], [def])
+    let name = Name v auto
+    let def = Definition name e
+    return (Variable name [], [def])
 
 {-
 Turn if into jumps and labels
@@ -166,7 +169,6 @@ Turn if into jumps and labels
         sts1
     @else
         sts2
--}
 transformIfIntoJumps m =
     let
         f (If [(cond, thenBranch)] elseBranch : statements) = do
@@ -174,11 +176,12 @@ transformIfIntoJumps m =
             thenVar <- fmap (\i -> pack ("then" ++ show i)) newUnique
             elseVar <- fmap (\i -> pack ("else" ++ show i)) newUnique
 
-            return ([Definition condVar (TypeVariable "i32" [] Nothing) cond,
+            return ([Definition (Name condVar (TypeVariable "i32" [] Nothing)) cond,
                 JumpNonZero condVar thenVar elseVar,
                 Label thenVar] ++ thenBranch ++ [Label elseVar] ++ concat elseBranch ++ statements)
         f x = return x
     in transformBiM f m
+-}
 
 -- TODO lazy comparison operator into jumps
 -- This is more advanced, because it probably cannot be done without phi
@@ -213,7 +216,6 @@ Option 1
         jnz %cond, @loop, @break
     @break
         sts2
--}
 transformWhileIntoJumps m =
     let
         f (While cond loopStats : statements) = do
@@ -223,11 +225,12 @@ transformWhileIntoJumps m =
             breakVar <- fmap (\i -> pack ("break" ++ show i)) newUnique
 
             return ([Label continueVar,
-                Definition condVar (TypeVariable "i32" [] Nothing) cond,
+                Definition (Name condVar (TypeVariable "i32" [] Nothing)) cond,
                 JumpNonZero condVar loopVar breakVar,
                 Label loopVar] ++ loopStats ++ [Jump continueVar, Label breakVar] ++ statements)
         f x = return x
     in transformBiM f m
+-}
 
 -- IDEA for generic
 -- * grab all generic function and struct definitions
@@ -251,15 +254,15 @@ genericVariableIntoSpecialization' m =
     let
         f v@(Variable _ []) =
             return v
-        f v@(Variable "sizeof" _) =
+        f v@(Variable (Name "sizeof" _) _) =
             return v
-        f (Apply (Variable "sizeof" [t]) []) =
+        f (Apply (Variable (Name "sizeof" _) [t]) []) =
             return (Literal (Int64 (calculateSize t)))
-        f (Variable name typeParameters) = do
+        f (Variable (Name name ty) typeParameters) = do
             _ <- ensureInstance name typeParameters
             let concreteName = concretize name typeParameters
             lift (putStrLn ("Ensure specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
-            return (Variable concreteName [])
+            return (Variable (Name concreteName ty) [])
         f x = return x
     in transformBiM f m
 
@@ -321,32 +324,32 @@ substitute substitution m =
 -- Turns auto into concrete types
 autoIntoType m =
     let
-        f (Definition name returnType (Apply e@(Variable v []) es)) = do
+        f (Definition (Name name returnType) (Apply e@(Variable (Name v _) []) es)) = do
             ref <- asks (\(Env _ _ tyEnv _) -> tyEnv)
             env <- lift (readIORef ref)
             if isOperator v
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
-                then return (Definition name (TypeVariable "i32" [] Nothing) (Apply e es))
+                then return (Definition (Name name (TypeVariable "i32" [] Nothing)) (Apply e es))
                 else (case lookup v env of
                     -- TODO match returnType with (last ts)
-                    Just t@(TypeVariable "Fn" ts Nothing) -> return (Definition name (last ts) (Apply e es))
+                    Just (TypeVariable "Fn" ts Nothing) -> return (Definition (Name name (last ts)) (Apply e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
         -- TODO allow generic functions at this point?
         f (FunctionDefintion name returnType [] parameters statements) = do
-            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]) Nothing)
+            addToEnv name (makeFnTypeWithParameters returnType parameters)
             -- TODO add parameter types only locally
-            traverse (uncurry addToEnv) parameters
+            traverse (\(Name i t) -> addToEnv i t) parameters
             statements' <- traverse f statements
             return (FunctionDefintion name returnType [] parameters statements')
         f (StructDefinition name [] parameters) = do
             let returnType = TypeVariable name [] Nothing
-            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]) Nothing)
+            addToEnv name (makeFnTypeWithParameters returnType parameters)
             -- TODO add parameter types only locally
-            traverse (uncurry addToEnv) parameters
+            traverse (\(Name i t) -> addToEnv i t) parameters
             return (StructDefinition name [] parameters)
         f s@(ExternDefintion name returnType parameters) = do
-            addToEnv name (TypeVariable "Fn" (fmap snd parameters ++ [returnType]) Nothing)
+            addToEnv name (makeFnTypeWithParameters returnType parameters)
             return s
         f s = return s
     in traverse f m
@@ -362,24 +365,29 @@ pointersIntoType m =
 toQbe s = intercalate "\n\n" (fmap toQbeP s)
 
 -- Top level
-toQbeP (Definition name ty e) =
+toQbeP (Definition (Name name ty) e) =
     "data" <+> "$" <> fromText name <+> "=" <+> "{" <+> toQbeT ty <+> toQbeE e <+> "}"
 toQbeP s = toQbeS s
 
 readType :: Expression -> Type
-readType = undefined
+readType (Variable (Name _ ty) _) = ty
+readType (DotAccess _ (Name _ ty) _) = ty
+readType (Apply e _) = case readType e of
+    TypeVariable "Fn" tys Nothing -> last tys
+    ty -> error ("Cannot read type of expression " ++ show e ++ " which applies " ++ show ty)
+readType other = error ("Cannot read type of expression " ++ show other) 
 
 -- TODO use type in comparisons for float and similar
-toQbeS (Definition name ty (Apply (Variable "==" _) [e1, e2])) =
+toQbeS (Definition (Name name ty) (Apply (Variable (Name "==" _) _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2)
-toQbeS (Definition name ty (Apply (Variable "!=" _) [e1, e2])) =
+toQbeS (Definition (Name name ty) (Apply (Variable (Name "!=" _) _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2)
 -- No variable necessary for void
-toQbeS (Definition _ (TypeVariable "void" [] Nothing) (Apply v parameters)) =
+toQbeS (Definition (Name "_" (TypeVariable "void" [] Nothing)) (Apply v parameters)) =
     indent (toQbeCall (readType v) v parameters)
-toQbeS (Definition name returnType (Apply v parameters)) =
+toQbeS (Definition (Name name returnType) (Apply v parameters)) =
     indent ("%" <> fromText name <+> "=" <> toQbeT returnType <+> toQbeCall (readType v) v parameters)
-toQbeS (Definition name ty e) =
+toQbeS (Definition (Name name ty) e) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> toQbeE e)
 toQbeS (FunctionDefintion name ty _ parameters statements) =
     "export function" <+> toQbeT ty <+> "$" <> fromText name
@@ -390,9 +398,9 @@ toQbeS (FunctionDefintion name ty _ parameters statements) =
     <//> "}"
 toQbeS (Return (Just e)) = indent ("ret" <+> toQbeE e)
 toQbeS (Return Nothing) = indent "ret"
-toQbeS (JumpNonZero c t e) = indent ("jnz" <+> "%" <> fromText c <> "," <+> "@" <> fromText t <> "," <+> "@" <> fromText e)
-toQbeS (Jump l) = indent ("jmp" <+> "@" <> fromText l)
-toQbeS (Label e) = "@" <> fromText e
+-- toQbeS (JumpNonZero c t e) = indent ("jnz" <+> "%" <> fromText c <> "," <+> "@" <> fromText t <> "," <+> "@" <> fromText e)
+-- toQbeS (Jump l) = indent ("jmp" <+> "@" <> fromText l)
+--toQbeS (Label e) = "@" <> fromText e
 -- TODO filter these out, because they create a lot of whitespace
 toQbeS (Import _ _) = ""
 toQbeS (ExternDefintion _ _ _) = ""
@@ -408,20 +416,24 @@ toQbeCall (TypeVariable "Fn" tys Nothing) v parameters =
     in "call" <+> toQbeE v <> parens (intercalate ", " (fmap toQbeParam parametersWithType))
 toQbeCall t v _ = error ("Error: Non-function type in toQbeCall " ++ show t ++ " calling " ++ show v)
 
-toQbeFunParam (name, ty) = toQbeT ty <+> "%" <> fromText name
+toQbeFunParam (Name name ty) = toQbeT ty <+> "%" <> fromText name
 
 toQbeParam (e, ty) = toQbeT ty <+> toQbeE e
 
 -- TODO add size for arrays
-toQbeStructParam (name, ty) = toQbeT ty
+-- in C-style the size is after the name
+-- int a[5] instead of int[5] a
+toQbeStructParam (Name _ ty) = toQbeT ty
 
 --toQbeE (Variable name _) = "%" <> fromText name
 --toQbeE (Variable name _) = "$" <> fromText name
-toQbeE (Variable name _) = fromText name
+toQbeE (Variable name _) = fromName name
 toQbeE (Literal l) = toQbeL l
 toQbeE other = error ("QbeE " ++ show other)
 
+toQbeL (Int32 l) = fromText (pack (show l))
 toQbeL (Int64 l) = fromText (pack (show l))
+toQbeL (Float32 l) = fromText (pack (show l))
 toQbeL (Float64 l) = fromText (pack (show l))
 toQbeL (Bool True) = "true"
 toQbeL (Bool False) = "false"
@@ -451,16 +463,16 @@ toQbeT (TypeVariable "i64" [] Nothing) = "l"
 toQbeT (TypeVariable "ptr" [] Nothing) = "l"
 toQbeT (TypeVariable "auto" [] Nothing) = error "Error: auto appeared in printing stage"
 toQbeT (TypeVariable s [] Nothing) = ":" <> fromText s
-toQbeT (TypeVariable s typeParameters Nothing) =
+toQbeT (TypeVariable s typeParameters arr) =
     error ("Error: generic type "
-        ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
+        ++ unpack s ++ show typeParameters ++ " " ++ show arr ++ " appeared in printing stage")
 
 
 
 toCs (Module _ s) = intercalate "\n\n" (fmap toCsS s)
 
 
-toCsS (Definition name ty e) =
+toCsS (Definition (Name name ty) e) =
     toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
 toCsS (Call e) = toCsE e <> ";"
 toCsS (Assignment e1 e2) = toCsE e1 <+> "=" <+> toCsE e2 <> ";"
@@ -473,7 +485,8 @@ toCsS (FunctionDefintion name ty typeParameters parameters statements) =
 toCsS (Return (Just e)) = "return" <+> toCsE e <> ";"
 toCsS (Return Nothing) = "return;"
 toCsS (Import _ _) = ""
-toCsS (ExternDefintion name returnType parameters) = "extern" <+> toCsT returnType <+> fromText name <> parens (intercalate ", " (fmap toCsFunParam parameters)) <>";"
+toCsS (ExternDefintion name returnType parameters) =
+    "extern" <+> toCsT returnType <+> fromText name <> parens (intercalate ", " (fmap toCsFunParam parameters)) <>";"
 toCsS (StructDefinition name typeParameters parameters) =
     "public struct" <+> fromText name <> toCsTypDefParams typeParameters
         <//> "{"
@@ -500,7 +513,7 @@ printBlock sts = "{"
     <//> indent (intercalate "\n" (fmap toCsS sts))
     <//> "}"
 
-toCsFunParam (name, ty) = toCsT ty <+> fromText name
+toCsFunParam (Name name ty) = toCsT ty <+> fromText name
 
 toCsTypDefParams [] = mempty
 toCsTypDefParams tyNames = "<" <> intercalate ", " (fmap fromText tyNames) <> ">"
@@ -510,22 +523,24 @@ toCsTypParams typeParameters = "<" <> intercalate ", " (fmap toCsT typeParameter
 
 toCsParam (e, ty) = toCsT ty <+> toCsE e
 
-toCsStructParam (name, ty) = "public" <+> toCsT ty <+> fromText name <> ";"
+toCsStructParam (Name name ty) = "public" <+> toCsT ty <+> fromText name <> ";"
 
-toCsE (Variable name typeParameters) = fromText name <> toCsTypParams typeParameters
+toCsE (Variable name typeParameters) = fromName name <> toCsTypParams typeParameters
 toCsE (Literal l) = toCsL l
 -- Operators
-toCsE (Apply (Variable v _) [e1, e2]) | isOperator v =
+toCsE (Apply (Variable (Name v _) _) [e1, e2]) | isOperator v =
     parensToCsE e1 <+> fromText v <+> parensToCsE e2
 -- Non Operator Apply
 toCsE (Apply e es) = toCsE e <> parens (intercalate ", " (fmap toCsE es))
 toCsE (DotAccess e name typeParameters) =
-    toCsE e <> "." <> fromText name <> toCsTypParams typeParameters
+    toCsE e <> "." <> fromName name <> toCsTypParams typeParameters
 toCsE (SquareAccess e1 e2) =
     toCsE e1 <> "[" <> toCsE e2 <> "]"
 toCsE (ArrayExpression es) =
     "[" <> intercalate ", " (fmap toCsE es) <> "]"
 toCsE other = error ("CsE " ++ show other)
+
+fromName (Name n _) = fromText n
 
 toCsL (Int32 l) = fromText (pack (show l))
 toCsL (Int64 l) = fromText (pack (show l)) <> "L"
@@ -537,7 +552,7 @@ toCsL (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 
 parensToCsE e =
     case e of
-        (Apply (Variable v _) _) | isOperator v -> parens (toCsE e)
+        (Apply (Variable (Name i _) _) _) | isOperator i -> parens (toCsE e)
         _ -> toCsE e
 
 toCsT t@(TypeVariable s typeParameters arraySize) =

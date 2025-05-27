@@ -18,8 +18,8 @@ data Token =
     Identifier Text
     | Int Int32
     | Long Int64
-    | Double Double
     | Float Float
+    | Double Double
     | Special Text
     | String Text
     | TemplateStringBegin
@@ -68,7 +68,7 @@ singleLexeme = fmap String nonTemplateString
 digits = takeWhile1 isDigit
 
 digitsWithOptionalSign = do
-    s <- option "" (string "+" <> string "-'")
+    s <- option "" (string "+" <> string "-")
     ds <- digits
     return (s <> ds)
 
@@ -119,7 +119,7 @@ escapeSequence = char '\\' *>
 templateString = do
     _ <- string "$\""
     midParts <- many' (eitherP templateStringPart expressionPart)
-    _ <- char '"'
+    _ <- char '\"'
     return (TemplateStringBegin : collapse midParts ++ [TemplateStringEnd])
 
 templateStringPart = fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x == '\\' && x /= '{'))

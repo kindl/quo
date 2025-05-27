@@ -15,9 +15,8 @@ executable quo
     main-is:        Main.hs
     other-modules:
         Types,
-        Parser,
-        Golike,
-        Clike,
+        Expressions,
+        Statements,
         Lexer,
         Compiler,
         Platte,

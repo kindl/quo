@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Parser where
+module Expressions where
 
 import Control.Applicative
 import Data.List(uncons)
@@ -48,7 +48,7 @@ conditionalOp =
     liftA3 makeConditionalOp orOp (token "?" *> optional expr) (token ":" *> expr) <|> orOp
 
 makeConditionalOp a thenBranch b =
-    Apply (Variable "?:" []) ([a] ++ maybe [] return thenBranch ++ [b])
+    Apply (Variable (Name "?:" auto) []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp = leftAssoc makeBinaryOp (token "||") andOp
@@ -60,14 +60,14 @@ addOp = leftAssoc makeBinaryOp (token "+" <|> token "-") mulOp
 mulOp = leftAssoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expoOp
 expoOp = liftA3 makeBinaryOp unOp (token "^") expoOp <|> unOp
 
-makeBinaryOp a opName b = Apply (Variable opName []) [a, b]
+makeBinaryOp a opName b = Apply (Variable (Name opName auto) []) [a, b]
 
 leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
 unOp = liftA2 makeUnaryOp (token "!" <|> token "-") postfixExpression <|> postfixExpression
 
-makeUnaryOp opName a = Apply (Variable opName []) [a]
+makeUnaryOp opName a = Apply (Variable (Name opName auto) []) [a]
 
 templateString = do
     TemplateStringBegin <- next
@@ -75,7 +75,7 @@ templateString = do
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    return (Apply (Variable "format" []) [parameter1, parameter2])
+    return (Apply (Variable (Name "format" auto) []) [parameter1, parameter2])
 
 templateStringMid = do
     TemplateStringMid s <- next
@@ -106,7 +106,7 @@ primaryExpression =
     fmap Literal literal <|> variable <|> parens expr <|> arrayExpression
 
 -- a.b
-dotAcces = liftA2 (\i ts e -> DotAccess e i ts)
+dotAcces = liftA2 (\i ts e -> DotAccess e (Name i auto) ts)
     (token "." *> identifier)
     (option [] typeParameters)
 
@@ -118,7 +118,7 @@ squareAccess = fmap (flip SquareAccess) (squares expr)
 -- a<int>(2, 3)
 parameterList = fmap (flip Apply) (parens (sepByTrailing expr (token ",")))
 
-variable = liftA2 Variable identifier (option [] typeParameters)
+variable = liftA2 (\i ts -> Variable (Name i auto) ts) identifier (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer = do

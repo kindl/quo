@@ -13,14 +13,23 @@ data Type = TypeVariable Text [Type] (Maybe ArraySize)
 
 auto = TypeVariable "auto" [] Nothing
 
+makeFunctionType returnType argumentTypes =
+    TypeVariable "Fn" (argumentTypes ++ [returnType]) Nothing
+
+makeFnTypeWithParameters returnType parameters =
+    makeFunctionType returnType (fmap (\(Name n t) -> t) parameters)
+
 isOperator x = elem x operators
 
 operators :: [Text]
 operators = ["==", "<=", ">=", "!=", "&&", "||",
     "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
 
+data Name = Name Text Type
+    deriving (Eq, Show, Data, Typeable)
+
 -- Consider adding (Maybe Expression) for default parameters
-type Parameter = (Text, Type)
+type Parameter = Name
 
 type TypeParameter = Text
 
@@ -30,7 +39,7 @@ data Module = Module Text [Statement]
     deriving (Eq, Show, Data, Typeable)
 
 data Statement =
-    Definition Text Type Expression
+    Definition Name Expression
     | FunctionDefintion Text ReturnType [TypeParameter] [Parameter] [Statement]
     | ExternDefintion Text ReturnType [Parameter]
     | StructDefinition Text [TypeParameter] [Parameter]
@@ -39,14 +48,14 @@ data Statement =
     | If [(Expression, [Statement])] (Maybe [Statement])
     | Return (Maybe Expression)
     | Import Text (Maybe [Text])
-    | For Text Type Expression [Statement]
+    | For Name Expression [Statement]
     | While Expression [Statement]
     | Switch Expression [(Expression, [Statement])]
     -- These are not parsed, but other statements like While
     -- are lowered into jumps and labels
-    | Label Text
-    | Jump Text
-    | JumpNonZero Text Text Text
+    -- | Label Text
+    -- | Jump Text
+    -- | JumpNonZero Text Text Text
         deriving (Eq, Show, Data, Typeable)
 
 -- TODO find the best option to model generics
@@ -57,8 +66,8 @@ data Statement =
 -- defining names, which only have type variable parameters and names being used, which have more complex types
 data Expression =
     Apply Expression [Expression]
-    | Variable Text [Type]
-    | DotAccess Expression Text [Type]
+    | Variable Name [Type]
+    | DotAccess Expression Name [Type]
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
     -- TODO could CastExpressions modeled as applying
