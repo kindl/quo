@@ -37,8 +37,8 @@ typ = (token "auto" $> auto) <|> typeVariable
 typeVariable = do
     t <- identifier
     ts <- option [] typeParameters
-    arraySize <- optional (squares integer)
-    return (TypeVariable t ts arraySize)
+    arraySizes <- many (squares integer)
+    return (foldl ArrayType (Concrete t ts) arraySizes)
 
 -- operators
 expr = conditionalOp

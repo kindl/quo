@@ -8,13 +8,15 @@ import Data.Data(Data, Typeable)
 
 type ArraySize = Int32
 
-data Type = TypeVariable Text [Type] (Maybe ArraySize)
-    deriving (Eq, Show, Data, Typeable)
+data Type =
+    Concrete Text [Type]
+    | ArrayType Type ArraySize
+        deriving (Eq, Show, Data, Typeable)
 
-auto = TypeVariable "auto" [] Nothing
+auto = Concrete "auto" []
 
 makeFunctionType returnType argumentTypes =
-    TypeVariable "Fn" (argumentTypes ++ [returnType]) Nothing
+    Concrete "Fn" (argumentTypes ++ [returnType])
 
 makeFnTypeWithParameters returnType parameters =
     makeFunctionType returnType (fmap (\(Name n t) -> t) parameters)
@@ -64,15 +66,14 @@ data Statement =
 -- or could become part of a Name, so we would have Variable Name and DotAcess Expression Name.
 -- Putting it into the name appears clean, but it implies that we have to differentiate between
 -- defining names, which only have type variable parameters and names being used, which have more complex types
+-- A cast is modeled as application cast<ResultType>(value)
+-- the problem with that might be, that it might be missing the input type
 data Expression =
     Apply Expression [Expression]
     | Variable Name [Type]
     | DotAccess Expression Name [Type]
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
-    -- TODO could CastExpressions modeled as applying
-    -- Variable _ "cast" [resultType]
-    | CastExpression Type Expression
     | Literal Literal
         deriving (Eq, Show, Data, Typeable)
 

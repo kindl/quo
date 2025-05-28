@@ -7,6 +7,7 @@ import Control.Monad.Trans.Reader(runReaderT, asks)
 import Control.Monad.Trans.Class(lift)
 import Data.IORef
 import Platte
+import qualified Data.Text as Text
 import Data.Text(Text, pack, unpack, replace)
 import Data.Maybe(fromMaybe)
 import Drucker
@@ -73,20 +74,20 @@ toM f x = return (f x)
 
 normalizeTypeNames m =
     let
-        f (TypeVariable "int" [] n) = TypeVariable "i32" [] n
-        f (TypeVariable "long" [] n) = TypeVariable "i64" [] n
-        f (TypeVariable "uint" [] n) = TypeVariable "u32" [] n
-        f (TypeVariable "ulong" [] n) = TypeVariable "u64" [] n
+        f (Concrete "int" []) = Concrete "i32" []
+        f (Concrete "long" []) = Concrete "i64" []
+        f (Concrete "uint" []) = Concrete "u32" []
+        f (Concrete "ulong" []) = Concrete "u64" []
         f x = x
     in transformBi f m
 
 -- Create a new variable, put the string into global definitions and swap
 makeStringsGlobal m =
     let
-        f s@(Literal (StringLiteral _)) = do
-            n <- fmap (\i -> pack ("s" ++ show i)) newUnique
-            -- TODO add size
-            let name = Name n (TypeVariable "char" [] Nothing)
+        f s@(Literal (StringLiteral l)) = do
+            u <- fmap (\i -> pack ("s" ++ show i)) newUnique
+            -- TODO finding correct size, accout for null byte etc
+            let name = Name u (ArrayType (Concrete "char" []) (fromIntegral (Text.length l)))
             ref <- asks (\(Env _ env _ _) -> env)
             lift (modifyIORef' ref (\e -> Definition name s : e))
             return (Variable name [])
@@ -176,7 +177,7 @@ transformIfIntoJumps m =
             thenVar <- fmap (\i -> pack ("then" ++ show i)) newUnique
             elseVar <- fmap (\i -> pack ("else" ++ show i)) newUnique
 
-            return ([Definition (Name condVar (TypeVariable "i32" [] Nothing)) cond,
+            return ([Definition (Name condVar (Concrete "i32" [] Nothing)) cond,
                 JumpNonZero condVar thenVar elseVar,
                 Label thenVar] ++ thenBranch ++ [Label elseVar] ++ concat elseBranch ++ statements)
         f x = return x
@@ -225,7 +226,7 @@ transformWhileIntoJumps m =
             breakVar <- fmap (\i -> pack ("break" ++ show i)) newUnique
 
             return ([Label continueVar,
-                Definition (Name condVar (TypeVariable "i32" [] Nothing)) cond,
+                Definition (Name condVar (Concrete "i32" [] Nothing)) cond,
                 JumpNonZero condVar loopVar breakVar,
                 Label loopVar] ++ loopStats ++ [Jump continueVar, Label breakVar] ++ statements)
         f x = return x
@@ -267,7 +268,7 @@ genericVariableIntoSpecialization' m =
     in transformBiM f m
 
 -- TODO array sizes
-calculateSize (TypeVariable "i32" [] Nothing) = 4
+calculateSize (Concrete "i32" []) = 4
 
 genericDefinitionIntoSpecialization m =
     let
@@ -289,9 +290,9 @@ genericDefinitionIntoSpecialization m =
 concretize name typeParameters =
     foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap prettyType typeParameters)
 
-prettyType (TypeVariable n [] Nothing) = n
-prettyType (TypeVariable "UnsafePointer" [t] Nothing) = prettyType t <> "ptr"
-prettyType (TypeVariable "UnsafeMutablePointer" [t] Nothing) = prettyType t <> "mutptr"
+prettyType (Concrete n []) = n
+prettyType (Concrete "UnsafePointer" [t]) = prettyType t <> "ptr"
+prettyType (Concrete "UnsafeMutablePointer" [t]) = prettyType t <> "mutptr"
 prettyType t = error ("Failed pretty " ++ show t)
 
 instantiateStruct name functionTypeParameters params typeParameters =
@@ -316,7 +317,7 @@ bind = zip
 
 substitute substitution m =
     let
-        f t@(TypeVariable v [] Nothing) =
+        f t@(Concrete v []) =
             fromMaybe t (lookup v substitution)
         f t = t
     in transformBi f m
@@ -329,10 +330,10 @@ autoIntoType m =
             env <- lift (readIORef ref)
             if isOperator v
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
-                then return (Definition (Name name (TypeVariable "i32" [] Nothing)) (Apply e es))
+                then return (Definition (Name name (Concrete "i32" [])) (Apply e es))
                 else (case lookup v env of
                     -- TODO match returnType with (last ts)
-                    Just (TypeVariable "Fn" ts Nothing) -> return (Definition (Name name (last ts)) (Apply e es))
+                    Just (Concrete "Fn" ts) -> return (Definition (Name name (last ts)) (Apply e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
         -- TODO allow generic functions at this point?
@@ -343,7 +344,7 @@ autoIntoType m =
             statements' <- traverse f statements
             return (FunctionDefintion name returnType [] parameters statements')
         f (StructDefinition name [] parameters) = do
-            let returnType = TypeVariable name [] Nothing
+            let returnType = Concrete name []
             addToEnv name (makeFnTypeWithParameters returnType parameters)
             -- TODO add parameter types only locally
             traverse (\(Name i t) -> addToEnv i t) parameters
@@ -356,8 +357,8 @@ autoIntoType m =
 
 pointersIntoType m =
     let
-        f (TypeVariable "UnsafeMutablePointer" _ Nothing) = TypeVariable "ptr" [] Nothing
-        f (TypeVariable "UnsafePointer" _ Nothing) = TypeVariable "ptr" [] Nothing
+        f (Concrete "UnsafeMutablePointer" _) = Concrete "ptr" []
+        f (Concrete "UnsafePointer" _) = Concrete "ptr" []
         f t = t
     in transformBi f m
 
@@ -373,9 +374,9 @@ readType :: Expression -> Type
 readType (Variable (Name _ ty) _) = ty
 readType (DotAccess _ (Name _ ty) _) = ty
 readType (Apply e _) = case readType e of
-    TypeVariable "Fn" tys Nothing -> last tys
+    Concrete "Fn" tys -> last tys
     ty -> error ("Cannot read type of expression " ++ show e ++ " which applies " ++ show ty)
-readType other = error ("Cannot read type of expression " ++ show other) 
+readType other = error ("Cannot read type of expression " ++ show other)
 
 -- TODO use type in comparisons for float and similar
 toQbeS (Definition (Name name ty) (Apply (Variable (Name "==" _) _) [e1, e2])) =
@@ -383,7 +384,7 @@ toQbeS (Definition (Name name ty) (Apply (Variable (Name "==" _) _) [e1, e2])) =
 toQbeS (Definition (Name name ty) (Apply (Variable (Name "!=" _) _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "cnel" <+> toQbeE e1 <> "," <+> toQbeE e2)
 -- No variable necessary for void
-toQbeS (Definition (Name "_" (TypeVariable "void" [] Nothing)) (Apply v parameters)) =
+toQbeS (Definition (Name "_" (Concrete "void" [])) (Apply v parameters)) =
     indent (toQbeCall (readType v) v parameters)
 toQbeS (Definition (Name name returnType) (Apply v parameters)) =
     indent ("%" <> fromText name <+> "=" <> toQbeT returnType <+> toQbeCall (readType v) v parameters)
@@ -410,7 +411,7 @@ toQbeS (StructDefinition name _ parameters) =
         <> "}"
 toQbeS other = error ("Error: QbeS Following statement appearedd in printing stage " ++ show other)
 
-toQbeCall (TypeVariable "Fn" tys Nothing) v parameters =
+toQbeCall (Concrete "Fn" tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> parens (intercalate ", " (fmap toQbeParam parametersWithType))
@@ -456,16 +457,16 @@ escape = replace "\0" "\\0"
 --toQbeE (ArrayExpression es) =
 
 -- TODO decide between string pointer and string
-toQbeT (TypeVariable "char" [] Nothing) = "b"
-toQbeT (TypeVariable "void" [] Nothing) = " "
-toQbeT (TypeVariable "i32" [] Nothing) = "w"
-toQbeT (TypeVariable "i64" [] Nothing) = "l"
-toQbeT (TypeVariable "ptr" [] Nothing) = "l"
-toQbeT (TypeVariable "auto" [] Nothing) = error "Error: auto appeared in printing stage"
-toQbeT (TypeVariable s [] Nothing) = ":" <> fromText s
-toQbeT (TypeVariable s typeParameters arr) =
+toQbeT (Concrete "char" []) = "b"
+toQbeT (Concrete "void" []) = " "
+toQbeT (Concrete "i32" []) = "w"
+toQbeT (Concrete "i64" []) = "l"
+toQbeT (Concrete "ptr" []) = "l"
+toQbeT (Concrete "auto" []) = error "Error: auto appeared in printing stage"
+toQbeT (Concrete s []) = ":" <> fromText s
+toQbeT (Concrete s typeParameters) =
     error ("Error: generic type "
-        ++ unpack s ++ show typeParameters ++ " " ++ show arr ++ " appeared in printing stage")
+        ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
 
 
 
@@ -555,12 +556,9 @@ parensToCsE e =
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (toCsE e)
         _ -> toCsE e
 
-toCsT t@(TypeVariable s typeParameters arraySize) =
+toCsT t@(Concrete s typeParameters) =
     if t == auto
         then "var"
-        else fromText s <> toCsTypParams typeParameters <>
-            case arraySize of
-                Nothing -> ""
-                Just _ -> "[]"
+        else fromText s <> toCsTypParams typeParameters
 
 parens x = "(" <> x <> ")"
