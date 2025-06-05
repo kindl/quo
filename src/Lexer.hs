@@ -61,9 +61,11 @@ collapseAux (Left l) es = l : es
 collapseAux (Right r) es = r ++ es
 
 singleLexeme = fmap String nonTemplateString
+    -- Numbers have to come before special,
+    -- so that the minus sign becomes part of the number
+    <|> numberToken
     <|> fmap Special special
     <|> fmap identifierOrKeyword identifier
-    <|> numberToken
 
 digits = takeWhile1 isDigit
 

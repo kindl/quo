@@ -11,15 +11,13 @@ type ArraySize = Int32
 data Type =
     Concrete Text [Type]
     | ArrayType Type ArraySize
+    | FunctionType [TypeParameter] ReturnType [Type]
         deriving (Eq, Show, Data, Typeable)
 
 auto = Concrete "auto" []
 
-makeFunctionType returnType argumentTypes =
-    Concrete "Fn" (argumentTypes ++ [returnType])
-
-makeFnTypeWithParameters returnType parameters =
-    makeFunctionType returnType (fmap (\(Name n t) -> t) parameters)
+makeFunctionType typeParameters returnType parameters =
+    FunctionType typeParameters returnType (fmap (\(Name n t) -> t) parameters)
 
 isOperator x = elem x operators
 
@@ -42,7 +40,7 @@ data Module = Module Text [Statement]
 
 data Statement =
     Definition Name Expression
-    | FunctionDefintion Text ReturnType [TypeParameter] [Parameter] [Statement]
+    | FunctionDefintion Text [TypeParameter] ReturnType [Parameter] [Statement]
     | ExternDefintion Text ReturnType [Parameter]
     | StructDefinition Text [TypeParameter] [Parameter]
     | Call Expression

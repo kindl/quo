@@ -6,6 +6,7 @@ import System.Environment
 import qualified Statements
 import Expressions
 import Drucker(toText)
+import Resolver(runResolve)
 
 
 main = do
@@ -17,7 +18,7 @@ main = do
 compile parser inputPath outputPath = do
     content <- Text.readFile inputPath
     parsed <- either fail return (parser content)
-    transformed <- runTransformations parsed
+    resolved <- runResolve parsed
     --Text.writeFile outputPath (toText (toQbe transformed))
     Text.writeFile "out/Test.cs" (toText (toCs parsed))
     putStrLn ("Written to " ++ outputPath)

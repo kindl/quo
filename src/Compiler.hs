@@ -11,6 +11,7 @@ import qualified Data.Text as Text
 import Data.Text(Text, pack, unpack, replace)
 import Data.Maybe(fromMaybe)
 import Drucker
+import Resolver(readType)
 
 
 data Env = Env
@@ -247,7 +248,7 @@ transformWhileIntoJumps m =
 
 genericVariableIntoSpecialization m =
     let
-        f fd@(FunctionDefintion _ _ (_:_) _ _) = return fd
+        f fd@(FunctionDefintion _ (_:_) _ _ _) = return fd
         f s = genericVariableIntoSpecialization' s
     in traverse f m
 
@@ -272,9 +273,9 @@ calculateSize (Concrete "i32" []) = 4
 
 genericDefinitionIntoSpecialization m =
     let
-        f statements@(FunctionDefintion _ _ [] _ _:_) =
+        f statements@(FunctionDefintion _ [] _ _ _:_) =
             return statements
-        f (FunctionDefintion name returnType typeParameters params body:statements) = do
+        f (FunctionDefintion name typeParameters returnType params body:statements) = do
             typeParameterApplications <- findTypeParameterApplications name
             lift (putStrLn ("Generating specialization for function" ++ show (name, typeParameterApplications)))
             let concretes = fmap (instantiate name returnType typeParameters params body) typeParameterApplications
@@ -311,7 +312,7 @@ instantiate name returnType functionTypeParameters params stats typeParameters =
         returnType' = substitute subst returnType
         params' = substitute subst params
         stats' = substitute subst stats
-    in FunctionDefintion concreteName returnType' [] params' stats'
+    in FunctionDefintion concreteName [] returnType' params' stats'
 
 bind = zip
 
@@ -332,25 +333,25 @@ autoIntoType m =
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
                 then return (Definition (Name name (Concrete "i32" [])) (Apply e es))
                 else (case lookup v env of
-                    -- TODO match returnType with (last ts)
-                    Just (Concrete "Fn" ts) -> return (Definition (Name name (last ts)) (Apply e es))
+                    -- TODO match returnTypes
+                    Just (FunctionType _ callReturnType _) -> return (Definition (Name name callReturnType) (Apply e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
         -- TODO allow generic functions at this point?
-        f (FunctionDefintion name returnType [] parameters statements) = do
-            addToEnv name (makeFnTypeWithParameters returnType parameters)
+        f (FunctionDefintion name [] returnType parameters statements) = do
+            addToEnv name (makeFunctionType [] returnType parameters)
             -- TODO add parameter types only locally
             traverse (\(Name i t) -> addToEnv i t) parameters
             statements' <- traverse f statements
-            return (FunctionDefintion name returnType [] parameters statements')
+            return (FunctionDefintion name [] returnType parameters statements')
         f (StructDefinition name [] parameters) = do
             let returnType = Concrete name []
-            addToEnv name (makeFnTypeWithParameters returnType parameters)
+            addToEnv name (makeFunctionType [] returnType parameters)
             -- TODO add parameter types only locally
             traverse (\(Name i t) -> addToEnv i t) parameters
             return (StructDefinition name [] parameters)
         f s@(ExternDefintion name returnType parameters) = do
-            addToEnv name (makeFnTypeWithParameters returnType parameters)
+            addToEnv name (makeFunctionType [] returnType parameters)
             return s
         f s = return s
     in traverse f m
@@ -370,14 +371,6 @@ toQbeP (Definition (Name name ty) e) =
     "data" <+> "$" <> fromText name <+> "=" <+> "{" <+> toQbeT ty <+> toQbeE e <+> "}"
 toQbeP s = toQbeS s
 
-readType :: Expression -> Type
-readType (Variable (Name _ ty) _) = ty
-readType (DotAccess _ (Name _ ty) _) = ty
-readType (Apply e _) = case readType e of
-    Concrete "Fn" tys -> last tys
-    ty -> error ("Cannot read type of expression " ++ show e ++ " which applies " ++ show ty)
-readType other = error ("Cannot read type of expression " ++ show other)
-
 -- TODO use type in comparisons for float and similar
 toQbeS (Definition (Name name ty) (Apply (Variable (Name "==" _) _) [e1, e2])) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> "ceql" <+> toQbeE e1 <> "," <+> toQbeE e2)
@@ -390,7 +383,7 @@ toQbeS (Definition (Name name returnType) (Apply v parameters)) =
     indent ("%" <> fromText name <+> "=" <> toQbeT returnType <+> toQbeCall (readType v) v parameters)
 toQbeS (Definition (Name name ty) e) =
     indent ("%" <> fromText name <+> "=" <> toQbeT ty <+> toQbeE e)
-toQbeS (FunctionDefintion name ty _ parameters statements) =
+toQbeS (FunctionDefintion name _ ty parameters statements) =
     "export function" <+> toQbeT ty <+> "$" <> fromText name
     <> parens (intercalate ", " (fmap toQbeFunParam parameters))
     <+> "{"
@@ -401,7 +394,7 @@ toQbeS (Return (Just e)) = indent ("ret" <+> toQbeE e)
 toQbeS (Return Nothing) = indent "ret"
 -- toQbeS (JumpNonZero c t e) = indent ("jnz" <+> "%" <> fromText c <> "," <+> "@" <> fromText t <> "," <+> "@" <> fromText e)
 -- toQbeS (Jump l) = indent ("jmp" <+> "@" <> fromText l)
---toQbeS (Label e) = "@" <> fromText e
+-- toQbeS (Label e) = "@" <> fromText e
 -- TODO filter these out, because they create a lot of whitespace
 toQbeS (Import _ _) = ""
 toQbeS (ExternDefintion _ _ _) = ""
@@ -411,7 +404,7 @@ toQbeS (StructDefinition name _ parameters) =
         <> "}"
 toQbeS other = error ("Error: QbeS Following statement appearedd in printing stage " ++ show other)
 
-toQbeCall (Concrete "Fn" tys) v parameters =
+toQbeCall (FunctionType [] _ tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> parens (intercalate ", " (fmap toQbeParam parametersWithType))
@@ -477,7 +470,7 @@ toCsS (Definition (Name name ty) e) =
     toCsT ty <+> fromText name <+> "=" <+> toCsE e <> ";"
 toCsS (Call e) = toCsE e <> ";"
 toCsS (Assignment e1 e2) = toCsE e1 <+> "=" <+> toCsE e2 <> ";"
-toCsS (FunctionDefintion name ty typeParameters parameters statements) =
+toCsS (FunctionDefintion name typeParameters ty parameters statements) =
     "public static" <+> toCsT ty <+> fromText name <> toCsTypDefParams typeParameters
         <> parens (intercalate ", " (fmap toCsFunParam parameters))
         <//> "{"

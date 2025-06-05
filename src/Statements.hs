@@ -93,7 +93,7 @@ functionDefintion = do
     ts <- option [] typeNameParameters
     params <- parens (sepByTrailing parameter (token ","))
     body <- curlies statements
-    return (FunctionDefintion i t ts params body)
+    return (FunctionDefintion i ts t params body)
 
 parameter = liftA2 (flip Name) typ identifier
 

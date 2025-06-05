@@ -15,6 +15,7 @@ executable quo
     main-is:        Main.hs
     other-modules:
         Types,
+        Resolver,
         Expressions,
         Statements,
         Lexer,
