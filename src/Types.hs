@@ -10,14 +10,19 @@ type ArraySize = Int32
 
 data Type =
     Concrete Text [Type]
-    | ArrayType Type ArraySize
-    | FunctionType [TypeParameter] ReturnType [Type]
+    | ArrayType Type (Maybe ArraySize)
+    | FunctionType ReturnType [Type]
         deriving (Eq, Show, Data, Typeable)
+
 
 auto = Concrete "auto" []
 
-makeFunctionType typeParameters returnType parameters =
-    FunctionType typeParameters returnType (fmap (\(Name n t) -> t) parameters)
+boolType = Concrete "bool" []
+
+intType = Concrete "int" []
+
+makeFunctionType returnType parameters =
+    FunctionType returnType (fmap (\(Name n t) -> t) parameters)
 
 isOperator x = elem x operators
 

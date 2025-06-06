@@ -40,7 +40,7 @@ importStatement = liftA2 Import
 
 externDefinition = do
     _ <- token "extern"
-    t <- typ
+    t <- typeOrAuto
     i <- identifier
     params <- parens (sepByTrailing parameter (token ","))
     _ <- token ";"
@@ -59,7 +59,7 @@ whileStatement = do
     return (While e body)
 
 forPart =
-    liftA3 (\t i e -> (i, t, e)) typ identifier (token "in" *> expr)
+    liftA3 (\t i e -> (i, t, e)) typeOrAuto identifier (token "in" *> expr)
 
 -- Consider turning switch into expression
 -- The problem is, that this creates a circle:
@@ -78,7 +78,7 @@ switchOptions =
 definition =
     liftA3 (\t i e -> Definition (Name i t) e) typeOrLet identifier (token "=" *> expr <* token ";")
 
-typeOrLet = (token "let" *> return auto) <|> typ
+typeOrLet = (token "let" *> return auto) <|> typeOrAuto
 
 structDefinition = do
     i <- token "struct" *> identifier
@@ -88,14 +88,14 @@ structDefinition = do
     return (StructDefinition i ts b)
 
 functionDefintion = do
-    t <- typ
+    t <- typeOrAuto
     i <- identifier
     ts <- option [] typeNameParameters
     params <- parens (sepByTrailing parameter (token ","))
     body <- curlies statements
     return (FunctionDefintion i ts t params body)
 
-parameter = liftA2 (flip Name) typ identifier
+parameter = liftA2 (flip Name) typeOrAuto identifier
 
 ifStatement = do
     ifBranch <- ifPart

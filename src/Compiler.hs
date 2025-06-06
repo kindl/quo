@@ -55,8 +55,8 @@ runTransformations (Module m statements) = do
 
     return (Module m (instances ++ result))
 
-transformations = toM normalizeTypeNames
-    >=> genericVariableIntoSpecialization
+transformations =
+    genericVariableIntoSpecialization
     >=> genericDefinitionIntoSpecialization
 
     >=> genericVariableIntoSpecialization
@@ -68,19 +68,6 @@ transformations = toM normalizeTypeNames
     >=> transformCallIntoDef
     >=> ssa
     >=> autoIntoType
-    >=> toM pointersIntoType
-
-toM f x = return (f x)
-
-
-normalizeTypeNames m =
-    let
-        f (Concrete "int" []) = Concrete "i32" []
-        f (Concrete "long" []) = Concrete "i64" []
-        f (Concrete "uint" []) = Concrete "u32" []
-        f (Concrete "ulong" []) = Concrete "u64" []
-        f x = x
-    in transformBi f m
 
 -- Create a new variable, put the string into global definitions and swap
 makeStringsGlobal m =
@@ -88,7 +75,7 @@ makeStringsGlobal m =
         f s@(Literal (StringLiteral l)) = do
             u <- fmap (\i -> pack ("s" ++ show i)) newUnique
             -- TODO finding correct size, accout for null byte etc
-            let name = Name u (ArrayType (Concrete "char" []) (fromIntegral (Text.length l)))
+            let name = Name u (ArrayType (Concrete "char" []) (Just (fromIntegral (Text.length l))))
             ref <- asks (\(Env _ env _ _) -> env)
             lift (modifyIORef' ref (\e -> Definition name s : e))
             return (Variable name [])
@@ -178,7 +165,7 @@ transformIfIntoJumps m =
             thenVar <- fmap (\i -> pack ("then" ++ show i)) newUnique
             elseVar <- fmap (\i -> pack ("else" ++ show i)) newUnique
 
-            return ([Definition (Name condVar (Concrete "i32" [] Nothing)) cond,
+            return ([Definition (Name condVar (Concrete "int" [] Nothing)) cond,
                 JumpNonZero condVar thenVar elseVar,
                 Label thenVar] ++ thenBranch ++ [Label elseVar] ++ concat elseBranch ++ statements)
         f x = return x
@@ -227,7 +214,7 @@ transformWhileIntoJumps m =
             breakVar <- fmap (\i -> pack ("break" ++ show i)) newUnique
 
             return ([Label continueVar,
-                Definition (Name condVar (Concrete "i32" [] Nothing)) cond,
+                Definition (Name condVar (Concrete "int" [] Nothing)) cond,
                 JumpNonZero condVar loopVar breakVar,
                 Label loopVar] ++ loopStats ++ [Jump continueVar, Label breakVar] ++ statements)
         f x = return x
@@ -269,7 +256,7 @@ genericVariableIntoSpecialization' m =
     in transformBiM f m
 
 -- TODO array sizes
-calculateSize (Concrete "i32" []) = 4
+calculateSize (Concrete "int" []) = 4
 
 genericDefinitionIntoSpecialization m =
     let
@@ -331,37 +318,30 @@ autoIntoType m =
             env <- lift (readIORef ref)
             if isOperator v
                 -- TODO operators: get type from paramters and pick correct call ceqw, ceql etc.
-                then return (Definition (Name name (Concrete "i32" [])) (Apply e es))
+                then return (Definition (Name name (Concrete "int" [])) (Apply e es))
                 else (case lookup v env of
                     -- TODO match returnTypes
-                    Just (FunctionType _ callReturnType _) -> return (Definition (Name name callReturnType) (Apply e es))
+                    Just (FunctionType callReturnType _) -> return (Definition (Name name callReturnType) (Apply e es))
                     Nothing -> fail ("Unknown " ++ show v ++ " in " ++ show (fmap fst env))
                     Just t -> fail ("Non function type " ++ show t ++ " for " ++ show v ++ " in " ++ show (fmap fst env)))
         -- TODO allow generic functions at this point?
         f (FunctionDefintion name [] returnType parameters statements) = do
-            addToEnv name (makeFunctionType [] returnType parameters)
+            addToEnv name (makeFunctionType returnType parameters)
             -- TODO add parameter types only locally
             traverse (\(Name i t) -> addToEnv i t) parameters
             statements' <- traverse f statements
             return (FunctionDefintion name [] returnType parameters statements')
         f (StructDefinition name [] parameters) = do
             let returnType = Concrete name []
-            addToEnv name (makeFunctionType [] returnType parameters)
+            addToEnv name (makeFunctionType returnType parameters)
             -- TODO add parameter types only locally
             traverse (\(Name i t) -> addToEnv i t) parameters
             return (StructDefinition name [] parameters)
         f s@(ExternDefintion name returnType parameters) = do
-            addToEnv name (makeFunctionType [] returnType parameters)
+            addToEnv name (makeFunctionType returnType parameters)
             return s
         f s = return s
     in traverse f m
-
-pointersIntoType m =
-    let
-        f (Concrete "UnsafeMutablePointer" _) = Concrete "ptr" []
-        f (Concrete "UnsafePointer" _) = Concrete "ptr" []
-        f t = t
-    in transformBi f m
 
 -- Pretty Printing to Qbe format
 toQbe s = intercalate "\n\n" (fmap toQbeP s)
@@ -404,7 +384,7 @@ toQbeS (StructDefinition name _ parameters) =
         <> "}"
 toQbeS other = error ("Error: QbeS Following statement appearedd in printing stage " ++ show other)
 
-toQbeCall (FunctionType [] _ tys) v parameters =
+toQbeCall (FunctionType _ tys) v parameters =
     let
         parametersWithType = zip parameters tys
     in "call" <+> toQbeE v <> parens (intercalate ", " (fmap toQbeParam parametersWithType))
@@ -452,8 +432,8 @@ escape = replace "\0" "\\0"
 -- TODO decide between string pointer and string
 toQbeT (Concrete "char" []) = "b"
 toQbeT (Concrete "void" []) = " "
-toQbeT (Concrete "i32" []) = "w"
-toQbeT (Concrete "i64" []) = "l"
+toQbeT (Concrete "int" []) = "w"
+toQbeT (Concrete "long" []) = "l"
 toQbeT (Concrete "ptr" []) = "l"
 toQbeT (Concrete "auto" []) = error "Error: auto appeared in printing stage"
 toQbeT (Concrete s []) = ":" <> fromText s
@@ -532,7 +512,6 @@ toCsE (SquareAccess e1 e2) =
     toCsE e1 <> "[" <> toCsE e2 <> "]"
 toCsE (ArrayExpression es) =
     "[" <> intercalate ", " (fmap toCsE es) <> "]"
-toCsE other = error ("CsE " ++ show other)
 
 fromName (Name n _) = fromText n
 
@@ -549,6 +528,7 @@ parensToCsE e =
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (toCsE e)
         _ -> toCsE e
 
+toCsT (ArrayType t _) = toCsT t <> "[]"
 toCsT t@(Concrete s typeParameters) =
     if t == auto
         then "var"

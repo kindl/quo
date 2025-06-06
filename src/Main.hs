@@ -21,4 +21,5 @@ compile parser inputPath outputPath = do
     resolved <- runResolve parsed
     --Text.writeFile outputPath (toText (toQbe transformed))
     Text.writeFile "out/Test.cs" (toText (toCs parsed))
+    Text.writeFile "out/TestResolved.cs" (toText (toCs resolved))
     putStrLn ("Written to " ++ outputPath)
