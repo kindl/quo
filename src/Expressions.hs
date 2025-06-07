@@ -30,15 +30,13 @@ next = StateT uncons
 -- `struct Example<T> { }`
 typeNameParameters = angles (sepByTrailing identifier (token ","))
 
-typeParameters = angles (sepByTrailing typeOrAuto (token ","))
-
-typeOrAuto = (token "auto" $> auto) <|> typeVariable
+typeParameters = angles (sepByTrailing typeVariable (token ","))
 
 typeVariable = do
     t <- identifier
     ts <- option [] typeParameters
     arraySizes <- many (squares (optional integer))
-    return (foldl ArrayType (Concrete t ts) arraySizes)
+    return (foldl ArrayType (makeConcrete t ts) arraySizes)
 
 -- operators
 expr = conditionalOp

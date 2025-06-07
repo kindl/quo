@@ -14,7 +14,6 @@ data Type =
     | FunctionType ReturnType [Type]
         deriving (Eq, Show, Data, Typeable)
 
-
 auto = Concrete "auto" []
 
 boolType = Concrete "bool" []
@@ -23,6 +22,12 @@ intType = Concrete "int" []
 
 makeFunctionType returnType parameters =
     FunctionType returnType (fmap (\(Name n t) -> t) parameters)
+
+makeConcrete "Fn" typeParameters =
+    FunctionType (last typeParameters) (init typeParameters)
+makeConcrete name typeParameters =
+    Concrete name typeParameters
+
 
 isOperator x = elem x operators
 
