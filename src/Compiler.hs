@@ -9,9 +9,8 @@ import Data.IORef
 import Platte
 import qualified Data.Text as Text
 import Data.Text(Text, pack, unpack, replace)
-import Data.Maybe(fromMaybe)
 import Drucker
-import Resolver(readType)
+import Resolver(readType, substitute)
 
 
 data Env = Env
@@ -302,13 +301,6 @@ instantiate name returnType functionTypeParameters params stats typeParameters =
     in FunctionDefintion concreteName [] returnType' params' stats'
 
 bind = zip
-
-substitute substitution m =
-    let
-        f t@(Concrete v []) =
-            fromMaybe t (lookup v substitution)
-        f t = t
-    in transformBi f m
 
 -- Turns auto into concrete types
 autoIntoType m =

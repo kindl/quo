@@ -2,23 +2,26 @@
 module Resolver where
 
 import Types
-import Control.Monad.Trans.Reader(runReaderT, ask, local, ReaderT)
+import Control.Monad.Trans.Reader(runReaderT, asks, local, ReaderT)
 import Control.Monad(zipWithM)
 import Data.Text(Text)
 import qualified Data.Text as Text
+import Platte
+import Data.Maybe(fromMaybe)
 
 
--- TODO instead of Type we might need to add a scheme
--- type Env = [(Text, ([TypeParameter], Type))]
-type Env = [(Text, Type)]
+data Env = Env [(Text, ([TypeParameter], Type))] [(Text, ([TypeParameter], [(Text, Type)]))]
 
 -- comparisons are a bit special. Should we allow comparing non matching types
 -- for example `1 == 1.0`?
+baseEnv :: Env
 baseEnv =
-    [
-        ("==", FunctionType boolType [auto, auto]),
-        ("!=", FunctionType boolType [auto, auto]),
-        ("nullptr", Concrete "null" [])
+    Env [
+        ("==", ([], FunctionType boolType [auto, auto])),
+        ("!=", ([], FunctionType boolType [auto, auto])),
+        ("nullptr", ([], Concrete "null" []))
+    ] [
+        ("Pointer", (["T"], [("value", Concrete "T" [])]))
     ]
 
 runResolve m = runReaderT (resolveModule m) baseEnv
@@ -31,15 +34,17 @@ runResolve m = runReaderT (resolveModule m) baseEnv
 resolveModule (Module name statements) =
     let
         annotations = gatherAnnotations statements
+        structs = gatherStructs statements
     in do
-        resolved <- with annotations (resolveDefinitions statements)
+        resolved <- with' annotations structs (resolveDefinitions statements)
         return (Module name resolved)
 
 
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
+-- TODO check return type or pass return type
 resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
-    resolved <- with (fmap nameToEnv parameters) (resolveStatements body)
+    resolved <- with (fmap nameToEntry parameters) (resolveStatements body)
     return (FunctionDefintion text typeParameters returnType parameters resolved)
 resolveTop d@(ExternDefintion _ _ _) = return d
 resolveTop d@(StructDefinition _ _ _) = return d
@@ -47,18 +52,22 @@ resolveTop i@(Import _ _) = return i
 resolveTop statement =
     fail ("Cannot resolve show " ++ show statement)
 
-nameToEnv (Name n t) = (n, t)
 
-getEnv = ask
+getVariableEnv = asks (\(Env e _) -> e)
 
-with e = local (\env -> e <> env)
+getStructEnv = asks (\(Env _ e) -> e)
+
+with env = local (\(Env variableEnv structEnv) -> Env (variableEnv <> env) structEnv)
+
+with' e s = local (\(Env variableEnv structEnv) -> Env (variableEnv <> e) (structEnv <> s))
+
 
 resolveStatements = foldr (resolveDefinition resolveStatement) (return mempty)
 
 resolveDefinition _ (Definition (Name name annotatedType) value) rest = do
     resolved <- resolveExpression value annotatedType
     let newType = readType resolved
-    rest' <- with (singleton name newType) rest
+    rest' <- with (entry name newType) rest
     return (Definition (Name name newType) resolved : rest')
 resolveDefinition f statement rest = do
     resolved <- f statement
@@ -82,7 +91,7 @@ resolveStatement (While condition statements) =
 resolveStatement (For (Name name annotatedType) expression statements) = do
     resolvedExpression <- resolveExpression expression annotatedType
     let newType = readType resolvedExpression
-    resolvedStatements <- with (singleton name newType) (resolveStatements statements)
+    resolvedStatements <- with (entry name newType) (resolveStatements statements)
     return (For (Name name newType) resolvedExpression resolvedStatements)
 resolveStatement (Switch expression branches) = do
     resolvedExpression <- resolveExpression expression auto
@@ -96,19 +105,30 @@ resolveBranch conditionType (condition, statements) =
     liftA2 (,) (resolveExpression condition conditionType) (resolveStatements statements)
 
 
-singleton text value = [(text, value)]
+nameToPair (Name n t) = (n, t)
+
+nameToEntry (Name n t) = (n, ([], t))
+
+entry text value = entry' text [] value
+
+entry' text typeParameters value = [(text, (typeParameters, value))]
 
 
 gatherAnnotations = foldMap gatherAnnotation
 
--- TODO type schemes
 gatherAnnotation (FunctionDefintion text typeParameters returnType parameters _) =
-    singleton text (makeFunctionType returnType parameters)
+    entry' text typeParameters (makeFunctionType returnType parameters)
 gatherAnnotation (StructDefinition text typeParameters parameters) =
-    singleton text (makeFunctionType (Concrete text (fmap (\x -> Concrete x []) typeParameters)) parameters)
+    entry' text typeParameters (makeFunctionType (Concrete text (fmap (\x -> Concrete x []) typeParameters)) parameters)
 gatherAnnotation (ExternDefintion text returnType parameters) =
-    singleton text (makeFunctionType returnType parameters)
+    entry text (makeFunctionType returnType parameters)
 gatherAnnotation _ = mempty
+
+gatherStructs = foldMap gatherStruct
+
+gatherStruct (StructDefinition text typeParameters parameters) =
+    [(text, (typeParameters, fmap nameToPair parameters))]
+gatherStruct _ = mempty
 
 readType :: Expression -> Type
 readType (Variable (Name _ ty) _) = ty
@@ -134,18 +154,24 @@ literalType (Int64 _) = Concrete "long" []
 literalType (Float32 _) = Concrete "float" []
 literalType (Float64 _) = Concrete "double" []
 
+-- TODO when are struct types instantiated?
 resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
 resolveExpression (Variable (Name name _) typeParameters) expectedType = do
-    env <- getEnv
-    scheme <- find name env
-    instantiated <- instantiate name scheme typeParameters
-    return (Variable instantiated [])
+    env <- getVariableEnv
+    (typeVars, scheme) <- find name env
+    let ty = instantiate scheme typeVars typeParameters
+    return (Variable (Name name ty) typeParameters)
+-- TODO when do these type parameters come into effect?
+-- when using namespace access? someModuleName.function<...>()
+-- can structs have methods, and if yes, can they have type parameters? someStruct.function<...>()
 resolveExpression (DotAccess expression (Name name _) typeParameters) expectedType = do
     resolved <- resolveExpression expression auto
-    env <- getEnv
-    scheme <- find name env
-    instantiated <- instantiate name scheme typeParameters
-    return (DotAccess resolved instantiated [])
+    let (Concrete structName structTypeParameters) = readType resolved
+    env <- getStructEnv
+    (typeVars, fields) <- find structName env
+    let instantiated = instantiate fields typeVars structTypeParameters
+    fieldType <- find name instantiated
+    return (DotAccess resolved (Name name fieldType) typeParameters)
 resolveExpression (Apply expression parameters) expectedType = do
     resolvedFunction <- resolveExpression expression auto
     let functionType = readType resolvedFunction
@@ -168,11 +194,15 @@ resolveExpression e@(Literal l) expectedType =
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 
-instantiate name ty@(FunctionType _ _) [] = return (Name name ty)
-instantiate name ty@(Concrete _ _) [] = return (Name name ty)
-instantiate name ty@(ArrayType _ _) [] = return (Name name ty)
-instantiate name scheme typeParameters = fail ("Cannot instantiate type " ++ show scheme ++ " with type parameters " ++ show typeParameters)
+instantiate ty [] [] = ty
+instantiate ty vars vals = substitute (zip vars vals) ty
 
+substitute substitution m =
+    let
+        f t@(Concrete v []) =
+            fromMaybe t (lookup v substitution)
+        f t = t
+    in transformBi f m
 
 safeZip f xs ys = if length xs /= length ys then fail "TODO safeZip" else zipWithM f xs ys
 
