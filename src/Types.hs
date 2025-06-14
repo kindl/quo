@@ -8,6 +8,7 @@ import Data.Data(Data, Typeable)
 
 type ArraySize = Int32
 
+-- Consider adding a pointer type
 data Type =
     Concrete Text [Type]
     | ArrayType Type (Maybe ArraySize)
@@ -20,8 +21,11 @@ boolType = Concrete "bool" []
 
 intType = Concrete "int" []
 
+nullptrType = Concrete "nullptr_t" []
+
+
 makeFunctionType returnType parameters =
-    FunctionType returnType (fmap (\(Name n t) -> t) parameters)
+    FunctionType returnType (fmap (\(Name _ t) -> t) parameters)
 
 makeConcrete "Fn" typeParameters =
     FunctionType (last typeParameters) (init typeParameters)
@@ -61,11 +65,6 @@ data Statement =
     | For Name Expression [Statement]
     | While Expression [Statement]
     | Switch Expression [(Expression, [Statement])]
-    -- These are not parsed, but other statements like While
-    -- are lowered into jumps and labels
-    -- | Label Text
-    -- | Jump Text
-    -- | JumpNonZero Text Text Text
         deriving (Eq, Show, Data, Typeable)
 
 -- TODO find the best option to model generics
