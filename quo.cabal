@@ -23,6 +23,9 @@ executable quo
         Lexer,
         Platte,
         Drucker
+    other-extensions:
+        DeriveDataTypeable,
+        OverloadedStrings
     build-depends:
         base,
         attoparsec < 0.15,
