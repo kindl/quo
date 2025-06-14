@@ -3,23 +3,23 @@
 
 module example;
 
-extern int puts(UnsafePointer<char> str);
-extern UnsafeMutablePointer<FILE> fopen(UnsafePointer<char> filename, UnsafePointer<char> mode);
-extern int fgetc(UnsafeMutablePointer<FILE> stream);
-extern int fputc(int character, UnsafeMutablePointer<FILE> stream);
-extern int fclose(UnsafeMutablePointer<FILE> stream);
-extern UnsafeMutablePointer<void> malloc(usize size);
+extern int puts(Pointer<char> str);
+extern Pointer<FILE> fopen(Pointer<char> filename, Pointer<char> mode);
+extern int fgetc(Pointer<FILE> stream);
+extern int fputc(int character, Pointer<FILE> stream);
+extern int fclose(Pointer<FILE> stream);
+extern Pointer<void> malloc(usize size);
 
 int EOF = -1;
 
 /*
 TODO inline
-UnsafePointer<T> alloc<T>() {
-    return cast<UnsafePointer<T>>(malloc(sizeof<T>()));
+Pointer<T> alloc<T>() {
+    return cast<Pointer<T>>(malloc(sizeof<T>()));
 }
 */
 
-void copyWithLoop(UnsafeMutablePointer<FILE> srcFileHandle, UnsafeMutablePointer<FILE> destFileHandle)
+void copyWithLoop(Pointer<FILE> srcFileHandle, Pointer<FILE> destFileHandle)
 {
     auto c = fgetc(srcFileHandle);
     while (c != EOF) {
