@@ -16,10 +16,11 @@ executable quo
     other-modules:
         Types,
         Resolver,
+        Compiler,
+        Specializer,
         Expressions,
         Statements,
         Lexer,
-        Compiler,
         Platte,
         Drucker
     build-depends:
