@@ -12,8 +12,6 @@ import qualified Data.Text.IO as Text
 import Lexer(lexe, Token(..))
 
 
--- TODO merge common parts in Golike and Clike
--- They are mostly the same and only the statements are different
 parseFile parser fileName = fmap (parse parser) (Text.readFile fileName)
 
 lexeFile fileName = fmap lexe (Text.readFile fileName)
@@ -87,8 +85,6 @@ literal = fmap Int32 integer
     <|> bool
 
 arrayExpression = fmap ArrayExpression (squares (sepByTrailing expr (token ",")))
-
--- TODO decide if we should be able to parse 2.ToString()
 
 -- Trick to parse left recursive
 postfixExpression = liftA2 (foldl (\e f -> f e))
