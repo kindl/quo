@@ -2,6 +2,7 @@
 module Resolver where
 
 import Types
+import Control.Applicative(liftA2)
 import Control.Monad.Trans.Reader(runReaderT, asks, local, ReaderT)
 import Control.Monad(zipWithM)
 import Data.Text(Text)

@@ -2,7 +2,7 @@
 module Statements where
 
 import Data.Functor(($>))
-import Control.Applicative((<|>), optional, many, liftA3)
+import Control.Applicative((<|>), optional, many, liftA2, liftA3)
 import Data.Attoparsec.Combinator(option)
 import Types
 import Expressions
