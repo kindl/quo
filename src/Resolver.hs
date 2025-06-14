@@ -10,19 +10,19 @@ import Platte
 import Data.Maybe(fromMaybe)
 
 
-data Env = Env [(Text, ([TypeParameter], Type))] [(Text, ([TypeParameter], [(Text, Type)]))]
+data Env = Env [(Text, Type)] [(Text, [(Text, Type)])]
 
--- comparisons are a bit special. Should we allow comparing non matching types
--- for example `1 == 1.0`?
+-- TODO handle operations on non matching types
+-- for example should the following be allowed or require an explicit conversion:
+-- 1 == 1.0
+-- 1 + 1.0
 baseEnv :: Env
 baseEnv =
     Env [
-        ("==", ([], FunctionType boolType [auto, auto])),
-        ("!=", ([], FunctionType boolType [auto, auto])),
-        ("nullptr", ([], Concrete "null" []))
-    ] [
-        ("Pointer", (["T"], [("value", Concrete "T" [])]))
-    ]
+        ("==", FunctionType boolType [auto, auto]),
+        ("!=", FunctionType boolType [auto, auto]),
+        ("nullptr", nullptrType)
+    ] []
 
 runResolve m = runReaderT (resolveModule m) baseEnv
 
@@ -44,7 +44,7 @@ resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
 -- TODO check return type or pass return type
 resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
-    resolved <- with (fmap nameToEntry parameters) (resolveStatements body)
+    resolved <- with (fmap nameToPair parameters) (resolveStatements body)
     return (FunctionDefintion text typeParameters returnType parameters resolved)
 resolveTop d@(ExternDefintion _ _ _) = return d
 resolveTop d@(StructDefinition _ _ _) = return d
@@ -107,27 +107,24 @@ resolveBranch conditionType (condition, statements) =
 
 nameToPair (Name n t) = (n, t)
 
-nameToEntry (Name n t) = (n, ([], t))
-
-entry text value = entry' text [] value
-
-entry' text typeParameters value = [(text, (typeParameters, value))]
+entry text value = [(text, value)]
 
 
 gatherAnnotations = foldMap gatherAnnotation
 
-gatherAnnotation (FunctionDefintion text typeParameters returnType parameters _) =
-    entry' text typeParameters (makeFunctionType returnType parameters)
-gatherAnnotation (StructDefinition text typeParameters parameters) =
-    entry' text typeParameters (makeFunctionType (Concrete text (fmap (\x -> Concrete x []) typeParameters)) parameters)
+gatherAnnotation (FunctionDefintion text [] returnType parameters _) =
+    entry text (makeFunctionType returnType parameters)
+gatherAnnotation (StructDefinition text [] parameters) =
+    -- gather structs as constructors
+    entry text (makeFunctionType (Concrete text []) parameters)
 gatherAnnotation (ExternDefintion text returnType parameters) =
     entry text (makeFunctionType returnType parameters)
 gatherAnnotation _ = mempty
 
 gatherStructs = foldMap gatherStruct
 
-gatherStruct (StructDefinition text typeParameters parameters) =
-    [(text, (typeParameters, fmap nameToPair parameters))]
+gatherStruct (StructDefinition text [] parameters) =
+    [(text, fmap nameToPair parameters)]
 gatherStruct _ = mempty
 
 readType :: Expression -> Type
@@ -141,7 +138,7 @@ readType (SquareAccess expression _) =
     case readType expression of
         ArrayType ty _ -> ty
         ty -> error ("Cannot read type because an array type was expected for " ++ show expression ++ " but was " ++ show ty)
-readType (ArrayExpression []) = error "TODO empty array types"
+readType (ArrayExpression []) = error "Cannot read type of empty array"
 readType (ArrayExpression expressions) =
     let
         ty = readType (head expressions)
@@ -154,32 +151,34 @@ literalType (Int64 _) = Concrete "long" []
 literalType (Float32 _) = Concrete "float" []
 literalType (Float64 _) = Concrete "double" []
 
--- TODO when are struct types instantiated?
 resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
-resolveExpression (Variable (Name name _) typeParameters) expectedType = do
+resolveExpression (Variable (Name name _) []) expectedType = do
     env <- getVariableEnv
-    (typeVars, scheme) <- find name env
-    let ty = instantiate scheme typeVars typeParameters
-    return (Variable (Name name ty) typeParameters)
--- TODO when do these type parameters come into effect?
--- when using namespace access? someModuleName.function<...>()
--- can structs have methods, and if yes, can they have type parameters? someStruct.function<...>()
-resolveExpression (DotAccess expression (Name name _) typeParameters) expectedType = do
+    ty <- find name env
+    if subsumes ty expectedType
+        then return (Variable (Name name ty) [])
+        else fail ("Actual type " ++ show ty ++ " did not match " ++ show expectedType)
+resolveExpression (DotAccess expression (Name name _) []) expectedType = do
     resolved <- resolveExpression expression auto
-    let (Concrete structName structTypeParameters) = readType resolved
-    env <- getStructEnv
-    (typeVars, fields) <- find structName env
-    let instantiated = instantiate fields typeVars structTypeParameters
-    fieldType <- find name instantiated
-    return (DotAccess resolved (Name name fieldType) typeParameters)
+    case readType resolved of
+        Concrete structName [] -> do
+            env <- getStructEnv
+            fields <- find structName env
+            fieldType <- find name fields
+            if subsumes fieldType expectedType
+                then return (DotAccess resolved (Name name fieldType) [])
+                else fail ("Actual type " ++ show fieldType ++ " did not match " ++ show expectedType)
+        -- TODO special case for built-in types like Pointer<T>
+        other -> fail ("Cannot access non-struct type" ++ show other)
 resolveExpression (Apply expression parameters) expectedType = do
     resolvedFunction <- resolveExpression expression auto
-    let functionType = readType resolvedFunction
-    case functionType of
-        FunctionType returnType _ | not (subsumes returnType expectedType) -> fail "TODO return type"
-        FunctionType _ parameterTypes ->
-            fmap (Apply resolvedFunction) (zipWithM resolveExpression parameters parameterTypes)
-        other -> fail ("Cannot apply expression " ++ show resolvedFunction ++ " without function type " ++ show other)
+    case readType resolvedFunction of
+        FunctionType returnType parameterTypes ->
+            if subsumes returnType expectedType
+                then fmap (Apply resolvedFunction) (zipParameters resolveExpression parameters parameterTypes)
+                else fail ("Return type " ++ show returnType ++ " did not match " ++ show expectedType)
+        other ->
+            fail ("Cannot apply expression " ++ show resolvedFunction ++ " without function type " ++ show other)
 resolveExpression (SquareAccess expression access) expectedType =
     liftA2 SquareAccess (resolveExpression expression (ArrayType expectedType Nothing)) (resolveExpression access intType)
 resolveExpression (ArrayExpression expressions) expectedType =
@@ -194,9 +193,6 @@ resolveExpression e@(Literal l) expectedType =
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 
-instantiate ty [] [] = ty
-instantiate ty vars vals = substitute (zip vars vals) ty
-
 substitute substitution m =
     let
         f t@(Concrete v []) =
@@ -204,12 +200,26 @@ substitute substitution m =
         f t = t
     in transformBi f m
 
-safeZip f xs ys = if length xs /= length ys then fail "TODO safeZip" else zipWithM f xs ys
+zipParameters f xs ys =
+    let
+        leftLength = length xs
+        rightLength = length ys
+    in if leftLength == rightLength
+        then zipWithM f xs ys
+        else fail ("Expected " ++ show leftLength ++ " parameters, but received " ++ show rightLength)
+
+zipTypeParameters xs ys =
+    let
+        leftLength = length xs
+        rightLength = length ys
+    in if leftLength == rightLength
+        then zip xs ys
+        else error ("Expected " ++ show leftLength ++ " type parameters, but received " ++ show rightLength)
 
 subsumes a _ | a == auto = error "auto on left hand"
 subsumes _ b | b == auto = True
 -- TODO find a solution for passing arrays to functions expecting a pointer
-subsumes (ArrayType elementType _) (Concrete "UnsafePointer" [pointerType]) =
+subsumes (ArrayType elementType _) (Concrete "Pointer" [pointerType]) =
     subsumes elementType pointerType
 subsumes a b = a == b
 
