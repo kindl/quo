@@ -91,7 +91,7 @@ parensWrapped e =
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (expressionToC e)
         _ -> expressionToC e
 
-typeToC (Concrete "Pointer" [t]) = typeToC t <> "*"
+typeToC (PointerType t) = typeToC t <> "*"
 typeToC (Concrete s []) = fromText s
 typeToC other = error ("Cannot print type of " ++ show other)
 

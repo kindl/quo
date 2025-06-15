@@ -124,5 +124,5 @@ concretize name typeParameters =
     foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap compactName typeParameters)
 
 compactName (Concrete name []) = name
-compactName (Concrete "Pointer" [ty]) = compactName ty <> "ptr"
+compactName (PointerType ty) = compactName ty <> "ptr"
 compactName ty = error ("Failed pretty " ++ show ty)

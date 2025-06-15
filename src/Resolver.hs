@@ -220,7 +220,7 @@ zipTypeParameters xs ys =
 subsumes a _ | a == auto = error "auto on left hand"
 subsumes _ b | b == auto = True
 -- TODO find a solution for passing arrays to functions expecting a pointer
-subsumes (ArrayType elementType _) (Concrete "Pointer" [pointerType]) =
+subsumes (ArrayType elementType _) (PointerType pointerType) =
     subsumes elementType pointerType
 subsumes a b = a == b
 

@@ -8,11 +8,11 @@ import Data.Data(Data, Typeable)
 
 type ArraySize = Int32
 
--- Consider adding a pointer type
 data Type =
     Concrete Text [Type]
     | ArrayType Type (Maybe ArraySize)
     | FunctionType ReturnType [Type]
+    | PointerType Type
         deriving (Eq, Show, Data, Typeable)
 
 auto = Concrete "auto" []
@@ -21,7 +21,7 @@ boolType = Concrete "bool" []
 
 intType = Concrete "int" []
 
-nullptrType = Concrete "nullptr_t" []
+nullptrType = PointerType (Concrete "void" [])
 
 
 makeFunctionType returnType parameters =
@@ -29,6 +29,8 @@ makeFunctionType returnType parameters =
 
 makeConcrete "Fn" typeParameters =
     FunctionType (last typeParameters) (init typeParameters)
+makeConcrete "Pointer" [typeParameter] =
+    PointerType typeParameter
 makeConcrete name typeParameters =
     Concrete name typeParameters
 
