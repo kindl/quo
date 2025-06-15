@@ -4,7 +4,7 @@ module Resolver where
 import Types
 import Control.Applicative(liftA2)
 import Control.Monad.Trans.Reader(runReaderT, asks, local, ReaderT)
-import Control.Monad(zipWithM)
+import Control.Monad(zipWithM, when)
 import Data.Text(Text)
 import qualified Data.Text as Text
 import Platte
@@ -43,9 +43,15 @@ resolveModule (Module name statements) =
 
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
--- TODO check return type or pass return type
 resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
     resolved <- with (fmap nameToPair parameters) (resolveStatements body)
+    let returnTypes = fmap getReturnType (getReturns resolved)
+    when (null returnTypes && returnType /= voidType)
+        (fail ("Function " ++ show text ++ " has return type " ++ show returnType ++ " but does not have a return statement"))
+
+    when (not (all (\x -> subsumes x returnType) returnTypes))
+        (fail ("Function " ++ show text ++ " return types " ++ show returnTypes ++ " do not fit annotated return type " ++ show returnType))
+
     return (FunctionDefintion text typeParameters returnType parameters resolved)
 resolveTop d@(ExternDefintion _ _ _) = return d
 resolveTop d@(StructDefinition _ _ _) = return d
@@ -53,6 +59,20 @@ resolveTop i@(Import _ _) = return i
 resolveTop statement =
     fail ("Cannot resolve show " ++ show statement)
 
+getReturnType (Just e) = readType e
+getReturnType Nothing = voidType
+
+getReturns :: [Statement] -> [Maybe Expression]
+getReturns s = foldMap getReturn s
+
+getReturn (Return e) = [e]
+getReturn (If branches maybeElseBranch) =
+    foldMap (getReturns . snd) branches ++ getReturns (concat maybeElseBranch)
+getReturn (While _ statements) =
+    getReturns statements
+getReturn (For _ _ statements) =
+    getReturns statements
+getReturn _ = []
 
 getVariableEnv = asks (\(Env e _) -> e)
 

@@ -17,6 +17,8 @@ data Type =
 
 auto = Concrete "auto" []
 
+voidType = Concrete "void" []
+
 boolType = Concrete "bool" []
 
 intType = Concrete "int" []
