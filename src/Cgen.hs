@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Compiler where
+module Cgen where
 
 import Types
 import Data.Text(pack)

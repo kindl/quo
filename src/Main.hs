@@ -1,14 +1,14 @@
 module Main where
 
 import qualified Data.Text.IO as Text
-import Compiler
+import Cgen
 import System.Environment
 import qualified Statements
 import Expressions
 import Drucker(toText)
 import Resolver(runResolve)
 import Specializer(specializeModule)
-import Qbe(moduleToQbe, prettyMod)
+import Qbegen(moduleToQbe, prettyMod)
 
 
 main = do

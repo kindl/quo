@@ -16,8 +16,8 @@ executable quo
     other-modules:
         Types,
         Resolver,
-        Compiler,
-        Qbe,
+        Cgen,
+        Qbegen,
         Specializer,
         Expressions,
         Statements,

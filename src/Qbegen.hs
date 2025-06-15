@@ -1,11 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Qbe where
+module Qbegen where
 
 import Data.Text(Text, unpack, pack)
 import Types
 import Drucker
 import Resolver(readType, literalType)
-import Compiler(parens)
+import Cgen(parens)
 import Data.IORef
 import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
 import Control.Monad.Trans.Class(lift)
