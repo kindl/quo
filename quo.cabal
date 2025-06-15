@@ -17,6 +17,7 @@ executable quo
         Types,
         Resolver,
         Compiler,
+        Qbe,
         Specializer,
         Expressions,
         Statements,
