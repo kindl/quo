@@ -8,12 +8,13 @@ import Expressions
 import Drucker(toText)
 import Resolver(runResolve)
 import Specializer(specializeModule)
+import Qbe(moduleToQbe, prettyMod)
 
 
 main = do
     args <- getArgs
     case args of
-        [path] -> compile (parse Statements.moduleDefinition) path "out/Test.c"
+        [path] -> compile (parse Statements.moduleDefinition) path "out/Test"
         _ -> putStrLn "Run with a input path like this `cabal run exes -- examples/example.h`"
 
 compile parser inputPath outputPath = do
@@ -21,5 +22,7 @@ compile parser inputPath outputPath = do
     parsed <- either fail return (parser content)
     specialized <- specializeModule parsed
     resolved <- runResolve specialized
-    Text.writeFile outputPath (toText (toC resolved))
+    Text.writeFile (outputPath <> ".c") (toText (toC resolved))
+    qbe <- moduleToQbe resolved
+    Text.writeFile (outputPath <> ".qbe") (toText (prettyMod qbe))
     putStrLn ("Written to " ++ outputPath)

@@ -7,8 +7,9 @@ import Drucker
 import Resolver(readType, literalType)
 import Compiler(parens)
 import Data.IORef
-import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT)
+import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
 import Control.Monad.Trans.Class(lift)
+import Data.Foldable(traverse_)
 
 
 -- Ident does not contain a sigil, while Val does
@@ -20,8 +21,9 @@ type Ty = Text
 data Mod = Mod Ident [Def]
 
 data Block =
-    Instruction Ident Ty [Val]
+    Instruction Ident Ty Ident [Val]
     | CallInstruction Ident Ty Val [(Ty, Val)]
+    | Store Ty Val Val
     | Label Ident
     | Jump Ident
     | JumpNonZero Val Ident Ident
@@ -54,8 +56,8 @@ emit instruction = do
     ref <- asks (\(Builder _ _ instructions) -> instructions)
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
-toBlock :: [Statement] -> ReaderT Builder IO [()]
-toBlock = traverse statementToBlock
+toBlock :: [Statement] -> ReaderT Builder IO ()
+toBlock = traverse_ statementToBlock
 
 statementToBlock :: Statement -> ReaderT Builder IO ()
 statementToBlock (Return Nothing) =
@@ -65,22 +67,62 @@ statementToBlock (Return (Just val)) = do
     emit (Ret (Just returnVal))
 statementToBlock (Call expression) =
     expressionToVal expression >> return ()
+statementToBlock (Assignment leftHand rightHand) = do
+    -- TODO ensure that leftHand produces a memory reference
+    addressVal <- expressionToVal' leftHand
+    (ty, val) <- expressionToVal rightHand
+    emit (Store ty val addressVal)
 -- TODO actual definition should not be a temporary but created on the stack
 -- so basically
 -- ptr <- alloc size of ty
 -- emit code of expression
 -- store in ptr
-statementToBlock (Definition (Name name ty) (Apply expression expressions)) = do
-    vals <- traverse expressionToVal expressions
+statementToBlock (Definition (Name name ty) expression) = do
+    emit (Instruction name pointerTy "alloca4" [getSize ty])
     val <- expressionToVal' expression
-    emit (CallInstruction ("%" <> name) (toQbeTy ty) val vals)
-statementToBlock (While condition statements) = do
+    emit (Store (toQbeTy ty) val ("%" <> name))
+statementToBlock (If [(condition, statements)] maybeElseBranch) = do
+    thenLabel <- newLabel "then"
+    elseLabel <- newLabel "else"
+    endLabel <- newLabel "end"
+
     val <- expressionToVal' condition
-    whileLabel <- newLabel
-    continueLabel <- newLabel
-    --TODO recurse into statements
-    emit (JumpNonZero val whileLabel continueLabel)
+    emit (JumpNonZero val thenLabel elseLabel)
+    emit (Label thenLabel)
+    toBlock statements
+    emit (Jump endLabel)
+    emit (Label elseLabel)
+    toBlock (concat maybeElseBranch)
+    emit (Label endLabel)
+{-
+@continue
+    %cond = cond
+    jnz %cond, @loop, @break
+@loop
+    sts1
+    jmp @continue
+@break
+    ...
+-}
+statementToBlock (While condition statements) = do
+    continueLabel <- newLabel "continue"
+    loopLabel <- newLabel "loop"
+    breakLabel <- newLabel "break"
+
+    -- CONSIDER passing the continue and break label
+    -- for implementing break and continue statements 
+    emit (Label continueLabel)
+    val <- expressionToVal' condition
+    emit (JumpNonZero val loopLabel breakLabel)
+    emit (Label loopLabel)
+    toBlock statements
+    emit (Jump continueLabel)
+    emit (Label breakLabel)
 statementToBlock s = fail ("TODO " ++ show s)
+
+-- TODO calculate sizes
+getSize :: Type -> Text
+getSize _ = "0"
 
 expressionToVal' :: Expression -> ReaderT Builder IO Ident
 expressionToVal' e = do
@@ -98,6 +140,12 @@ expressionToVal (Literal l) = do
 -- into
 -- %a = g()
 -- f(%a)
+expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
+    freshIdent <- newIdent "local"
+    vals <- traverse expressionToVal expressions
+    let ty = toQbeTy returnType
+    emit (CallInstruction freshIdent ty ("%" <> name) vals)
+    return (ty, "%" <> freshIdent)
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent "local"
     vals <- traverse expressionToVal expressions
@@ -117,18 +165,26 @@ literalToText (Float64 l) = "d_" <> pack (show l)
 literalToText (Bool True) = "true"
 literalToText (Bool False) = "false"
 
+pointerTy = "l"
+
+voidTy = ""
+
 toQbeTy :: Type -> Text
+toQbeTy (Concrete "void" []) = voidTy
 toQbeTy (Concrete "char" []) = "b"
+toQbeTy (Concrete "bool" []) = "w"
 toQbeTy (Concrete "int" []) = "w"
 toQbeTy (Concrete "long" []) = "l"
+toQbeTy (PointerType _) = pointerTy
+-- TODO how to handle array types? always decay to pointer?
+toQbeTy (ArrayType _ _) = pointerTy
 toQbeTy (Concrete "auto" []) = error "Error: auto appeared in printing stage"
 toQbeTy (Concrete s []) = ":" <> s
-toQbeTy (Concrete s typeParameters) =
-    error ("Error: generic type "
-        ++ unpack s ++ show typeParameters ++ " appeared in printing stage")
+toQbeTy other =
+    error ("Error: generic or function type " ++ show other ++ " appeared in printing stage")
 
-newLabel :: ReaderT Builder IO Text
-newLabel = newIdent "label"
+newLabel :: Text -> ReaderT Builder IO Text
+newLabel = newIdent
 
 registerConstant :: Text -> ReaderT Builder IO Text
 registerConstant str = do
@@ -140,26 +196,32 @@ registerConstant str = do
 
 
 -- Pretty Printing to Qbe format
-moduleToDefs :: Module -> IO Mod
-moduleToDefs (Module name statements) = do
-    defs <- fmap concat (traverse statementToDef statements)
-    return (Mod name defs)
+moduleToQbe (Module name statements) = do
+    uniques <- newIORef 0
+    globals <- newIORef []
+    instructions <- newIORef []
+    defs <- runReaderT (traverse statementToDef statements) (Builder uniques globals instructions)
+    return (Mod name (concat defs))
 
 -- Top level
-statementToDef :: Statement -> IO [Def]
+statementToDef :: Statement -> ReaderT Builder IO [Def]
 statementToDef (Definition (Name name ty) (Literal l)) =
     let
         val = literalToText l
     in return [DataDef name [(toQbeTy ty, val)]]
+-- TODO ensure that a block for a function ends with a ret
+-- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    numberSupply <- newIORef 0
-    globals <- newIORef []
-    instructions <- newIORef []
-    _ <- runReaderT (toBlock statements) (Builder numberSupply globals instructions)
-    blocks <- readIORef instructions
-    globalDefs <- readIORef globals
-    return (globalDefs ++ [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks])
+    instructions <- lift (newIORef [])
+    local (\(Builder uniques globals _) -> Builder uniques globals instructions) (toBlock statements)
+    blocks <- lift (readIORef instructions)
+    return [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks]
 statementToDef _ = return []
+
+
+prettyMod (Mod name defs) =
+    fromText "# Compiled from" <+> fromText name
+    <//> intercalate "\n\n" (fmap prettyDef defs)
 
 -- For definitions
 prettyFunParam :: (Ty, Ident) -> Document
@@ -189,7 +251,7 @@ prettyDef (FuncDef ty ident parameters block) =
     <//> intercalate "\n" (fmap prettyBlock block)
     <//> "}"
 prettyDef (DataDef ident fields) =
-    "type" <+> ":" <> fromText ident <+> "=" <+> "{"
+    "export data" <+> "$" <> fromText ident <+> "=" <+> "{"
         <> intercalate ", " (fmap prettyData fields)
         <> "}"
 prettyDef (TypeDef ident fields) =
@@ -198,10 +260,15 @@ prettyDef (TypeDef ident fields) =
         <> "}"
 
 prettyBlock :: Block -> Document
-prettyBlock (Instruction ident ty parameters) =
-    indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> (intercalate ", " (fmap prettyVal parameters)))
+prettyBlock (Instruction ident ty instr parameters) =
+    indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> fromText instr <+> (intercalate ", " (fmap prettyVal parameters)))
 prettyBlock (CallInstruction ident ty f parameters) =
-    indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> "call" <+> fromText f <> parens (intercalate ", " (fmap prettyParam parameters)))
+    indent ((if ty == voidTy
+        then ""
+        else "%" <> fromText ident <+> "=" <> prettyTy ty <+> "") <> "call" <+> fromText f <> parens (intercalate ", " (fmap prettyParam parameters)))
+prettyBlock (Store ty val addressVal) =
+    -- TODO ensure that ty is a base type
+    indent ("store" <> fromText ty <+> prettyVal val <> "," <+> prettyVal addressVal)
 prettyBlock (Label label) =
     -- Label is not indented
     "@" <> fromText label
