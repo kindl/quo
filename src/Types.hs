@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
 module Types where
 
-import Data.Text(Text, replace)
+import Data.Text(Text)
 import Data.Int(Int64, Int32)
 import Data.Data(Data, Typeable)
 
@@ -42,16 +42,6 @@ isOperator x = elem x operators
 operators :: [Text]
 operators = ["==", "<=", ">=", "!=", "&&", "||",
     "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
-
-
--- TODO check if \0 escpae character works in QBE
-escape = replace "\0" "\\0"
-    . replace "\n" "\\n"
-    . replace "\t" "\\t"
-    . replace "\r" "\\r"
-    . replace "\"" "\\\""
-    . replace "\'" "\\\'"
-    . replace "\\" "\\\\"
 
 
 data Name = Name Text Type

@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Qbegen where
 
-import Data.Text(Text, unpack, pack)
+import Data.Text(Text, pack)
 import Types
-import Drucker
 import Resolver(readType, literalType)
 import Cgen(parens)
 import Data.IORef
@@ -11,7 +10,8 @@ import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
 import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
 import Data.Int(Int32)
-
+import Prettyprinter((<+>), Doc)
+import Helpers((<//>), indent, fromText, intercalate, escape)
 
 -- Ident does not contain a sigil, while Val does
 type Ident = Text
@@ -242,25 +242,25 @@ prettyMod (Mod name defs) =
     <//> intercalate "\n\n" (fmap prettyDef defs)
 
 -- For definitions
-prettyFunParam :: (Ty, Ident) -> Document
+prettyFunParam :: (Ty, Ident) -> Doc a
 prettyFunParam (ty, ident) = prettyTy ty <+> "%" <> fromText ident
 
 -- For calls
-prettyParam :: (Ty, Val) -> Document
+prettyParam :: (Ty, Val) -> Doc a
 prettyParam (ty, val) = prettyTy ty <+> prettyVal val
 
 -- For global data
-prettyData :: (Ty, Val) -> Document
+prettyData :: (Ty, Val) -> Doc a
 prettyData = prettyParam
 
 
-prettyTy :: Text -> Document
+prettyTy :: Text -> Doc a
 prettyTy ty = fromText ty
 
-prettyVal :: Text -> Document
+prettyVal :: Text -> Doc a
 prettyVal val = fromText val
 
-prettyDef :: Def -> Document
+prettyDef :: Def -> Doc a
 prettyDef (FuncDef ty ident parameters block) =
     "export function" <+> prettyTy ty <+> "$" <> fromText ident
     <> parens (intercalate ", " (fmap prettyFunParam parameters))
@@ -277,7 +277,7 @@ prettyDef (TypeDef ident fields) =
         <> intercalate ", " (fmap prettyTy fields)
         <> "}"
 
-prettyBlock :: Block -> Document
+prettyBlock :: Block -> Doc a
 prettyBlock (Instruction ident ty instr parameters) =
     indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> fromText instr <+> (intercalate ", " (fmap prettyVal parameters)))
 prettyBlock (CallInstruction ident ty f parameters) =

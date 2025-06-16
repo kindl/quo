@@ -5,10 +5,10 @@ import Cgen
 import System.Environment
 import qualified Statements
 import Expressions
-import Drucker(toText)
 import Resolver(runResolve)
 import Specializer(specializeModule)
 import Qbegen(moduleToQbe, prettyMod)
+import Helpers(toText)
 
 
 main = do

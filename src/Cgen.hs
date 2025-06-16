@@ -3,7 +3,8 @@ module Cgen where
 
 import Types
 import Data.Text(pack)
-import Drucker(fromText, intercalate, (<+>), (<//>), indent)
+import Prettyprinter((<+>))
+import Helpers((<//>), intercalate, fromText, escape, indent)
 
 
 toC (Module _ s) = intercalate "\n\n" (fmap statementToC s)

@@ -23,7 +23,7 @@ executable quo
         Statements,
         Lexer,
         Platte,
-        Drucker
+        Helpers
     other-extensions:
         DeriveDataTypeable,
         OverloadedStrings
@@ -31,6 +31,7 @@ executable quo
         base,
         attoparsec < 0.15,
         transformers < 0.7,
+        prettyprinter < 1.8,
         text
     hs-source-dirs: src
     default-language: Haskell2010
