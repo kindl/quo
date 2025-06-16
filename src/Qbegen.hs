@@ -36,6 +36,8 @@ data Def =
     | FuncDef Ty Ident [(Ty, Ident)] [Block]
 
 data Builder = Builder
+    -- List of global names for determining sigil
+    [Text]
     -- Name supply
     (IORef Int)
     -- Global data for string literals
@@ -46,7 +48,7 @@ data Builder = Builder
 
 newUnique :: ReaderT Builder IO Int
 newUnique = do
-    ref <- asks (\(Builder supply _ _) -> supply)
+    ref <- asks (\(Builder _ supply _ _) -> supply)
     lift (modifyIORef' ref succ >> readIORef ref)
 
 newIdent :: Text -> ReaderT Builder IO Text
@@ -54,14 +56,18 @@ newIdent prefix = fmap (\i -> prefix <> pack (show i)) newUnique
 
 emit :: Block -> ReaderT Builder IO ()
 emit instruction = do
-    ref <- asks (\(Builder _ _ instructions) -> instructions)
+    ref <- asks (\(Builder _ _ _ instructions) -> instructions)
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
 withFreshBuilder action = do
     instructions <- lift (newIORef [])
-    local (\(Builder uniques globals _) -> Builder uniques globals instructions) action
+    local (\(Builder globals uniques stringDefs _) -> Builder globals uniques stringDefs instructions) action
     lift (readIORef instructions)
-    
+
+isGlobal :: Text -> ReaderT Builder IO Bool
+isGlobal name = do
+    globalNames <- asks (\(Builder g _ _ _) -> g)
+    return (elem name globalNames)
 
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
@@ -151,8 +157,9 @@ expressionToVal' e = do
 
 expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name name ty) []) = do
-    -- TODO referring to globals
-    return (toQbeTy ty, "%" <> name)
+    global <- isGlobal name
+    let sigil = if global then "$" else "%"
+    return (toQbeTy ty, sigil <> name)
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
@@ -164,7 +171,8 @@ expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) exp
     freshIdent <- newIdent "local"
     vals <- traverse expressionToVal expressions
     let ty = toQbeTy returnType
-    emit (CallInstruction freshIdent ty ("%" <> name) vals)
+    -- TODO Investigate: Does qbe allow calling local functions?
+    emit (CallInstruction freshIdent ty ("$" <> name) vals)
     return (ty, "%" <> freshIdent)
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent "local"
@@ -209,7 +217,7 @@ newLabel = newIdent
 registerConstant :: Text -> ReaderT Builder IO Text
 registerConstant str = do
     freshName <- newIdent "string"
-    ref <- asks (\(Builder _ constants _) -> constants)
+    ref <- asks (\(Builder _ _ stringDefs _) -> stringDefs)
     let escaped = "\"" <> escape str <> "\""
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped), ("b", "0")]]))
     return ("$" <> freshName)
@@ -218,9 +226,10 @@ registerConstant str = do
 -- Pretty Printing to Qbe format
 moduleToQbe (Module name statements) = do
     uniques <- newIORef 0
-    globals <- newIORef []
+    stringDefs <- newIORef []
     instructions <- newIORef []
-    defs <- runReaderT (traverse statementToDef statements) (Builder uniques globals instructions)
+    let globalNames = getGlobalNames statements
+    defs <- runReaderT (traverse statementToDef statements) (Builder globalNames uniques stringDefs instructions)
     return (Mod name (concat defs))
 
 -- Top level
@@ -236,12 +245,17 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     return [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks]
 statementToDef _ = return []
 
+getGlobalNames = foldMap getGlobalName
+
+getGlobalName (Definition (Name name _) _) = [name]
+getGlobalName (FunctionDefintion name _ _ _ _) = [name]
+getGlobalName _ = []
 
 prettyMod (Mod name defs) =
     fromText "# Compiled from" <+> fromText name
     <//> intercalate "\n\n" (fmap prettyDef defs)
 
--- For definitions
+-- For function definitions
 prettyFunParam :: (Ty, Ident) -> Doc a
 prettyFunParam (ty, ident) = prettyTy ty <+> "%" <> fromText ident
 
@@ -249,7 +263,7 @@ prettyFunParam (ty, ident) = prettyTy ty <+> "%" <> fromText ident
 prettyParam :: (Ty, Val) -> Doc a
 prettyParam (ty, val) = prettyTy ty <+> prettyVal val
 
--- For global data
+-- For data definitions
 prettyData :: (Ty, Val) -> Doc a
 prettyData = prettyParam
 
