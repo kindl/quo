@@ -10,6 +10,7 @@ import Data.IORef
 import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
 import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
+import Data.Int(Int32)
 
 
 -- Ident does not contain a sigil, while Val does
@@ -56,6 +57,12 @@ emit instruction = do
     ref <- asks (\(Builder _ _ instructions) -> instructions)
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
+withFreshBuilder action = do
+    instructions <- lift (newIORef [])
+    local (\(Builder uniques globals _) -> Builder uniques globals instructions) action
+    lift (readIORef instructions)
+    
+
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
@@ -78,7 +85,7 @@ statementToBlock (Assignment leftHand rightHand) = do
 -- emit code of expression
 -- store in ptr
 statementToBlock (Definition (Name name ty) expression) = do
-    emit (Instruction name pointerTy "alloca4" [getSize ty])
+    emit (Instruction name pointerTy "alloca4" [getSizeAsVal ty])
     val <- expressionToVal' expression
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
@@ -121,8 +128,21 @@ statementToBlock (While condition statements) = do
 statementToBlock s = fail ("TODO " ++ show s)
 
 -- TODO calculate sizes
-getSize :: Type -> Text
-getSize _ = "0"
+-- we either need a struct environment or annotate sizes in a previous pass
+getSizeAsVal ty = pack (show (getSize ty))
+
+pointerSize = 8
+
+getSize :: Type -> Int32
+getSize (Concrete "char" []) = 1
+getSize (Concrete "int" []) = 4
+getSize (Concrete "long" []) = 8
+getSize (Concrete "float" []) = 4
+getSize (Concrete "double" []) = 8
+getSize (PointerType _) = pointerSize
+getSize (ArrayType ty (Just size)) = getSize ty * size
+--getSize (ArrayType ty Nothing) = pointerSize
+getSize other = error ("Cannot determine size of type " ++ show other)
 
 expressionToVal' :: Expression -> ReaderT Builder IO Ident
 expressionToVal' e = do
@@ -212,9 +232,7 @@ statementToDef (Definition (Name name ty) (Literal l)) =
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    instructions <- lift (newIORef [])
-    local (\(Builder uniques globals _) -> Builder uniques globals instructions) (toBlock statements)
-    blocks <- lift (readIORef instructions)
+    blocks <- withFreshBuilder (toBlock statements)
     return [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks]
 statementToDef _ = return []
 
