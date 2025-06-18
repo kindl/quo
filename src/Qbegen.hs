@@ -73,6 +73,29 @@ isGlobal name = do
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
+bodyToBlock statements =
+    let
+        locals = getDefs statements
+    in do
+        traverse_ emitAlloc locals
+        toBlock statements
+
+emitAlloc (Name name ty) =
+    emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
+
+
+getDefs :: [Statement] -> [Name]
+getDefs = foldMap getDef
+
+getDef (Definition name _) = [name]
+getDef (If branches maybeElseBranch) =
+    foldMap (getDefs . snd) branches ++ getDefs (concat maybeElseBranch)
+getDef (While _ statements) =
+    getDefs statements
+getDef (For _ _ statements) =
+    getDefs statements
+getDef _ = []
+
 statementToBlock :: Statement -> ReaderT Builder IO ()
 statementToBlock (Return Nothing) =
     emit (Ret Nothing)
@@ -86,13 +109,10 @@ statementToBlock (Assignment leftHand rightHand) = do
     addressVal <- expressionToVal' leftHand
     (ty, val) <- expressionToVal rightHand
     emit (Store ty val addressVal)
--- TODO actual definition should not be a temporary but created on the stack
--- so basically
--- ptr <- alloc size of ty
--- emit code of expression
--- store in ptr
 statementToBlock (Definition (Name name ty) expression) = do
-    emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
+    -- The allocation for locals are not done here, but per function.
+    -- This is necessary so that we do not keep reallocating,
+    -- for example in a while-loop
     val <- expressionToVal' expression
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
@@ -254,7 +274,7 @@ statementToDef (Definition (Name name ty) (Literal l)) = do
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    blocks <- withFreshBuilder (toBlock statements)
+    blocks <- withFreshBuilder (bodyToBlock statements)
     return [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks]
 statementToDef _ = return []
 
