@@ -10,6 +10,7 @@ import Specializer(specializeModule)
 import Qbegen(moduleToQbe, prettyMod)
 import Helpers(toText)
 import System.FilePath(takeBaseName)
+import System.Process(readProcess)
 
 
 main = do
@@ -26,8 +27,19 @@ compile inputPath outputPath = do
     -- Annotate variables with types
     resolved <- runResolve specialized
     let outputBase = outputPath <> "/" <> takeBaseName inputPath
-    Text.writeFile (outputBase <> ".c") (toText (toC resolved))
-    putStrLn ("Wrote " ++ outputBase ++ ".c")
+    let cOut = outputBase <> ".c"
+    Text.writeFile cOut (toText (toC resolved))
+    putStrLn ("Wrote " ++ cOut)
     qbe <- moduleToQbe resolved
-    Text.writeFile (outputBase <> ".qbe") (toText (prettyMod qbe))
-    putStrLn ("Wrote " ++ outputBase ++ ".qbe")
+    let qbeOut = outputBase <> ".qbe"
+    Text.writeFile qbeOut (toText (prettyMod qbe))
+    putStrLn ("Wrote " ++ qbeOut)
+    let asmOut = outputBase <> ".s"
+    qbeProcess <- readProcess "qbe" [qbeOut, "-o", asmOut] ""
+    putStrLn qbeProcess
+    putStrLn ("Wrote " ++ asmOut)
+    let objOut = outputBase <> ".out"
+    ccProcess <- readProcess "cc" [asmOut, "-o", objOut] ""
+    putStrLn ccProcess
+    putStrLn ("Wrote " ++ objOut)
+    putStrLn ("Done")
