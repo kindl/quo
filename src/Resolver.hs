@@ -87,7 +87,8 @@ resolveStatements = foldr (resolveDefinition resolveStatement) (return mempty)
 
 resolveDefinition _ (Definition (Name name annotatedType) value) rest = do
     resolved <- resolveExpression value annotatedType
-    let newType = readType resolved
+    -- If the type was inferred, replace with the result type, otherwise leave it
+    let newType = if annotatedType == auto then readType resolved else annotatedType
     rest' <- with (entry name newType) rest
     return (Definition (Name name newType) resolved : rest')
 resolveDefinition f statement rest = do
