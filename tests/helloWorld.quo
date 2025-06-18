@@ -1,0 +1,7 @@
+extern int puts(Pointer<char> str);
+
+int main()
+{
+    puts("Hello world!");
+    return 0;
+}

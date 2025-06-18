@@ -1,0 +1,11 @@
+extern int putchar(int c);
+
+let glob = 107;
+
+int main()
+{
+    putchar(glob);
+    // Newline
+    putchar(10);
+    return 0;
+}
