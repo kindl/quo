@@ -4,25 +4,30 @@ import qualified Data.Text.IO as Text
 import Cgen
 import System.Environment
 import qualified Statements
-import Expressions
+import Expressions(parse)
 import Resolver(runResolve)
 import Specializer(specializeModule)
 import Qbegen(moduleToQbe, prettyMod)
 import Helpers(toText)
+import System.FilePath(takeBaseName)
 
 
 main = do
     args <- getArgs
     case args of
-        [path] -> compile (parse Statements.moduleDefinition) path "out/Test"
+        [path] -> compile path "out"
         _ -> putStrLn "Run with a input path like this `cabal run exes -- examples/example.h`"
 
-compile parser inputPath outputPath = do
+compile inputPath outputPath = do
     content <- Text.readFile inputPath
-    parsed <- either fail return (parser content)
+    parsed <- either fail return (parse Statements.moduleDefinition content)
+    -- Turn generic definitions into concrete definitions
     specialized <- specializeModule parsed
+    -- Annotate variables with types
     resolved <- runResolve specialized
-    Text.writeFile (outputPath <> ".c") (toText (toC resolved))
+    let outputBase = outputPath <> "/" <> takeBaseName inputPath
+    Text.writeFile (outputBase <> ".c") (toText (toC resolved))
+    putStrLn ("Wrote " ++ outputBase ++ ".c")
     qbe <- moduleToQbe resolved
-    Text.writeFile (outputPath <> ".qbe") (toText (prettyMod qbe))
-    putStrLn ("Written to " ++ outputPath)
+    Text.writeFile (outputBase <> ".qbe") (toText (prettyMod qbe))
+    putStrLn ("Wrote " ++ outputBase ++ ".qbe")
