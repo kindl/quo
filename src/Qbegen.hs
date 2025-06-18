@@ -13,6 +13,7 @@ import Data.Int(Int32)
 import Prettyprinter((<+>), Doc)
 import Helpers((<//>), indent, fromText, intercalate, escape)
 
+
 -- Ident does not contain a sigil, while Val does
 type Ident = Text
 type Val = Text
@@ -91,7 +92,7 @@ statementToBlock (Assignment leftHand rightHand) = do
 -- emit code of expression
 -- store in ptr
 statementToBlock (Definition (Name name ty) expression) = do
-    emit (Instruction name pointerTy "alloca4" [getSizeAsVal ty])
+    emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
     val <- expressionToVal' expression
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
@@ -123,7 +124,7 @@ statementToBlock (While condition statements) = do
     breakLabel <- newLabel "break"
 
     -- CONSIDER passing the continue and break label
-    -- for implementing break and continue statements 
+    -- for implementing break and continue statements
     emit (Label continueLabel)
     val <- expressionToVal' condition
     emit (JumpNonZero val loopLabel breakLabel)
@@ -136,6 +137,13 @@ statementToBlock s = fail ("TODO " ++ show s)
 -- TODO calculate sizes
 -- we either need a struct environment or annotate sizes in a previous pass
 getSizeAsVal ty = pack (show (getSize ty))
+
+getAlignmentAsText ty = pack (show (getAlignment ty))
+
+getAlignment (PointerType _) = 8
+getAlignment (Concrete "int" []) = 4
+-- TODO
+getAlignment _ = 4
 
 pointerSize = 8
 
@@ -157,25 +165,30 @@ expressionToVal' e = do
 
 expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name name ty) []) = do
-    global <- isGlobal name
-    let sigil = if global then "$" else "%"
-    return (toQbeTy ty, sigil <> name)
+    freshIdent <- newIdent ".local"
+    isGlobalVar <- isGlobal name
+    let sigil = if isGlobalVar then "$" else "%"
+    let qbeTy = toQbeTy ty
+    -- Local variables are either an address to the stack or global
+    -- so a load instruction is necessary
+    emit (Instruction freshIdent qbeTy ("load" <> qbeTy) [sigil <> name])
+    return (qbeTy, "%" <> freshIdent)
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
--- Turn a nested call like f(g())
--- into
--- %a = g()
--- f(%a)
 expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
-    freshIdent <- newIdent "local"
+    -- Turn a nested call like f(g())
+    -- into
+    -- %a = g()
+    -- f(%a)
+    freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
-    let ty = toQbeTy returnType
+    let qbeTy = toQbeTy returnType
     -- TODO Investigate: Does qbe allow calling local functions?
-    emit (CallInstruction freshIdent ty ("$" <> name) vals)
-    return (ty, "%" <> freshIdent)
+    emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
+    return (qbeTy, "%" <> freshIdent)
 expressionToVal (Apply expression expressions) = do
-    freshIdent <- newIdent "local"
+    freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
     (returnType, val) <- expressionToVal expression
     emit (CallInstruction freshIdent returnType val vals)
@@ -218,8 +231,8 @@ registerConstant :: Text -> ReaderT Builder IO Text
 registerConstant str = do
     freshName <- newIdent "string"
     ref <- asks (\(Builder _ _ stringDefs _) -> stringDefs)
-    let escaped = "\"" <> escape str <> "\""
-    lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped), ("b", "0")]]))
+    let escaped = "\"" <> escape str <> "\\000\""
+    lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
     return ("$" <> freshName)
 
 
@@ -230,14 +243,14 @@ moduleToQbe (Module name statements) = do
     instructions <- newIORef []
     let globalNames = getGlobalNames statements
     defs <- runReaderT (traverse statementToDef statements) (Builder globalNames uniques stringDefs instructions)
-    return (Mod name (concat defs))
+    createdStringDefs <- readIORef stringDefs
+    return (Mod name (createdStringDefs ++ concat defs))
 
 -- Top level
 statementToDef :: Statement -> ReaderT Builder IO [Def]
-statementToDef (Definition (Name name ty) (Literal l)) =
-    let
-        val = literalToText l
-    in return [DataDef name [(toQbeTy ty, val)]]
+statementToDef (Definition (Name name ty) (Literal l)) = do
+    val <- literalToVal l
+    return [DataDef name [(toQbeTy ty, val)]]
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
