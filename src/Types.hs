@@ -15,26 +15,36 @@ data Type =
     | PointerType Type
         deriving (Eq, Show, Data, Typeable)
 
+auto :: Type
 auto = Concrete "auto" []
 
+voidType :: Type
 voidType = Concrete "void" []
 
+boolType :: Type
 boolType = Concrete "bool" []
 
+intType :: Type
 intType = Concrete "int" []
 
+longType :: Type
 longType = Concrete "long" []
 
+floatType :: Type
 floatType = Concrete "float" []
 
+doubleType :: Type
 doubleType = Concrete "double" []
 
+nullptrType :: Type
 nullptrType = PointerType (Concrete "void" [])
 
 
+makeFunctionType :: ReturnType -> [Parameter] -> Type
 makeFunctionType returnType parameters =
     FunctionType returnType (fmap (\(Name _ t) -> t) parameters)
 
+makeConcrete :: Text -> [ReturnType] -> Type
 makeConcrete "Fn" typeParameters =
     FunctionType (last typeParameters) (init typeParameters)
 makeConcrete "Pointer" [typeParameter] =
@@ -43,6 +53,7 @@ makeConcrete name typeParameters =
     Concrete name typeParameters
 
 
+isOperator :: Text -> Bool
 isOperator x = elem x operators
 
 operators :: [Text]
