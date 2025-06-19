@@ -207,10 +207,10 @@ expressionToVal (Variable (Name name ty) []) = do
             freshIdent <- newIdent ".local"
             wasGlobal <- isGlobal name
             let sigil = if wasGlobal then "$" else "%"
-    -- Local variables are either an address to the stack or global
-    -- so a load instruction is necessary
-    emit (Instruction freshIdent qbeTy ("load" <> qbeTy) [sigil <> name])
-    return (qbeTy, "%" <> freshIdent)
+            -- Local variables are either an address to the stack or global
+            -- so a load instruction is necessary
+            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) [sigil <> name])
+            return (qbeTy, "%" <> freshIdent)
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
@@ -222,8 +222,10 @@ expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) exp
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
     let qbeTy = toQbeTy returnType
-    -- TODO Investigate: Does qbe allow calling local functions?
-    emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
+    if isOperator name
+        then emitOperator freshIdent qbeTy name vals
+        -- TODO Investigate: Does qbe allow calling local functions?
+        else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
     return (qbeTy, "%" <> freshIdent)
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent ".local"
@@ -231,6 +233,39 @@ expressionToVal (Apply expression expressions) = do
     (returnType, val) <- expressionToVal expression
     emit (CallInstruction freshIdent returnType val vals)
     return (returnType, "%" <> freshIdent)
+
+emitOperator ident qbeTy "-_" [(_, val)] =
+    emit (Instruction ident qbeTy "neg" [val])
+emitOperator ident qbeTy "!" [(_, val)] =
+    emit (Instruction ident qbeTy "ceqw" [val, "0"])
+emitOperator ident qbeTy op [(qbeTy1, val1), (qbeTy2, val2)] =
+    if qbeTy1 == qbeTy2
+        then emitOperator' ident qbeTy op qbeTy1 val1 val2
+        else fail ("Emit operator: Wrong type " ++ show qbeTy1 ++ " " ++ show qbeTy2)
+emitOperator ident qbeTy op vals =
+    fail "Emit operator: Wrong args"
+
+emitOperator' ident qbeTy "+" _ val1 val2 =
+    emit (Instruction ident qbeTy "add" [val1, val2])
+emitOperator' ident qbeTy "-" _ val1 val2 =
+    emit (Instruction ident qbeTy "sub" [val1, val2])
+emitOperator' ident qbeTy "*" _ val1 val2 =
+    emit (Instruction ident qbeTy "mul" [val1, val2])
+emitOperator' ident qbeTy "/" _ val1 val2 =
+    emit (Instruction ident qbeTy "div" [val1, val2])
+emitOperator' ident qbeTy "==" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("ceq" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy ">" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("csgt" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "<" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("cslt" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "<=" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("csle" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy ">=" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("csge" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
+emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
 literalToVal :: Literal -> ReaderT Builder IO Val
 literalToVal (StringLiteral str) = registerConstant str
