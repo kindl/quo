@@ -6,6 +6,7 @@ import Types
 import Resolver(readType, literalType)
 import Cgen(parens)
 import Data.IORef
+import Control.Monad(when)
 import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
 import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
@@ -39,6 +40,8 @@ data Def =
 data Builder = Builder
     -- List of global names for determining sigil
     [Text]
+    -- List of parameters
+    [Text]
     -- Name supply
     (IORef Int)
     -- Global data for string literals
@@ -49,7 +52,7 @@ data Builder = Builder
 
 newUnique :: ReaderT Builder IO Int
 newUnique = do
-    ref <- asks (\(Builder _ supply _ _) -> supply)
+    ref <- asks (\(Builder _ _ supply _ _) -> supply)
     lift (modifyIORef' ref succ >> readIORef ref)
 
 newIdent :: Text -> ReaderT Builder IO Text
@@ -57,28 +60,36 @@ newIdent prefix = fmap (\i -> prefix <> pack (show i)) newUnique
 
 emit :: Block -> ReaderT Builder IO ()
 emit instruction = do
-    ref <- asks (\(Builder _ _ _ instructions) -> instructions)
+    ref <- asks (\(Builder _ _ _ _ instructions) -> instructions)
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
+
+withParameters params action =
+    local (\(Builder globals _ uniques stringDefs instructions) ->
+        Builder globals params uniques stringDefs instructions) action
 
 withFreshBuilder action = do
     instructions <- lift (newIORef [])
-    local (\(Builder globals uniques stringDefs _) -> Builder globals uniques stringDefs instructions) action
+    local (\(Builder params globals uniques stringDefs _) -> Builder params globals uniques stringDefs instructions) action
     lift (readIORef instructions)
 
 isGlobal :: Text -> ReaderT Builder IO Bool
 isGlobal name = do
-    globalNames <- asks (\(Builder g _ _ _) -> g)
+    globalNames <- asks (\(Builder g _ _ _ _) -> g)
     return (elem name globalNames)
+    
+isParam :: Text -> ReaderT Builder IO Bool
+isParam name = do
+    params <- asks (\(Builder _ p _ _ _) -> p)
+    return (elem name params)
 
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
-bodyToBlock statements =
+bodyToBlock parameters statements =
     let
         locals = getDefs statements
-    in do
-        traverse_ emitAlloc locals
-        toBlock statements
+    in withParameters parameters
+        (traverse_ emitAlloc locals >> toBlock statements)
 
 emitAlloc (Name name ty) =
     emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
@@ -104,11 +115,14 @@ statementToBlock (Return (Just val)) = do
     emit (Ret (Just returnVal))
 statementToBlock (Call expression) =
     expressionToVal expression >> return ()
-statementToBlock (Assignment leftHand rightHand) = do
-    -- TODO ensure that leftHand produces a memory reference
-    addressVal <- expressionToVal' leftHand
-    (ty, val) <- expressionToVal rightHand
-    emit (Store ty val addressVal)
+statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
+    -- TODO handling complex leftHand expressions
+    wasParam <- isParam name
+    when wasParam (fail ("Parameter " ++ show name ++ " is constant and cannot be reassigned"))
+    wasGlobal <- isGlobal name
+    when wasParam (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
+    val <- expressionToVal' rightHand
+    emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (Definition (Name name ty) expression) = do
     -- The allocation for locals are not done here, but per function.
     -- This is necessary so that we do not keep reallocating,
@@ -185,10 +199,14 @@ expressionToVal' e = do
 
 expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name name ty) []) = do
-    freshIdent <- newIdent ".local"
-    isGlobalVar <- isGlobal name
-    let sigil = if isGlobalVar then "$" else "%"
     let qbeTy = toQbeTy ty
+    wasParam <- isParam name
+    if wasParam
+        then return (qbeTy, "%" <> name) 
+        else do
+            freshIdent <- newIdent ".local"
+            wasGlobal <- isGlobal name
+            let sigil = if wasGlobal then "$" else "%"
     -- Local variables are either an address to the stack or global
     -- so a load instruction is necessary
     emit (Instruction freshIdent qbeTy ("load" <> qbeTy) [sigil <> name])
@@ -250,7 +268,7 @@ newLabel = newIdent
 registerConstant :: Text -> ReaderT Builder IO Text
 registerConstant str = do
     freshName <- newIdent "string"
-    ref <- asks (\(Builder _ _ stringDefs _) -> stringDefs)
+    ref <- asks (\(Builder _ _ _ stringDefs _) -> stringDefs)
     let escaped = "\"" <> escape str <> "\\000\""
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
     return ("$" <> freshName)
@@ -262,7 +280,8 @@ moduleToQbe (Module name statements) = do
     stringDefs <- newIORef []
     instructions <- newIORef []
     let globalNames = getGlobalNames statements
-    defs <- runReaderT (traverse statementToDef statements) (Builder globalNames uniques stringDefs instructions)
+    let baseBuilder = Builder globalNames [] uniques stringDefs instructions
+    defs <- runReaderT (traverse statementToDef statements) baseBuilder
     createdStringDefs <- readIORef stringDefs
     return (Mod name (createdStringDefs ++ concat defs))
 
@@ -274,8 +293,9 @@ statementToDef (Definition (Name name ty) (Literal l)) = do
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    blocks <- withFreshBuilder (bodyToBlock statements)
-    return [FuncDef (toQbeTy ty) name (fmap (\(Name n t) -> (toQbeTy t, n)) parameters) blocks]
+    let qbeParams =fmap (\(Name n t) -> (toQbeTy t, n)) parameters
+    blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
+    return [FuncDef (toQbeTy ty) name qbeParams blocks]
 statementToDef _ = return []
 
 getGlobalNames = foldMap getGlobalName
