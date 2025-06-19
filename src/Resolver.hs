@@ -169,9 +169,9 @@ readType (ArrayExpression expressions) =
 literalType (StringLiteral l) = ArrayType (Concrete "char" []) (Just (fromIntegral (Text.length l + 1)))
 literalType (Bool _) = boolType
 literalType (Int32 _) = intType
-literalType (Int64 _) = Concrete "long" []
-literalType (Float32 _) = Concrete "float" []
-literalType (Float64 _) = Concrete "double" []
+literalType (Int64 _) = longType
+literalType (Float32 _) = floatType
+literalType (Float64 _) = doubleType
 
 resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
 resolveExpression (Variable (Name name _) []) expectedType = do

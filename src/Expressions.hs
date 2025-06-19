@@ -61,7 +61,10 @@ makeBinaryOp a opName b = Apply (Variable (Name opName auto) []) [a, b]
 leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
-unOp = liftA2 makeUnaryOp (token "!" <|> token "-") postfixExpression <|> postfixExpression
+-- unary minus has a separate name
+-- to differentiate between negation and subtraction
+unOp = liftA2 makeUnaryOp (token "!" <|> (token "-" $> "-_")) postfixExpression
+    <|> postfixExpression
 
 makeUnaryOp opName a = Apply (Variable (Name opName auto) []) [a]
 

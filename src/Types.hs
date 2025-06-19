@@ -23,6 +23,12 @@ boolType = Concrete "bool" []
 
 intType = Concrete "int" []
 
+longType = Concrete "long" []
+
+floatType = Concrete "float" []
+
+doubleType = Concrete "double" []
+
 nullptrType = PointerType (Concrete "void" [])
 
 
@@ -40,7 +46,7 @@ makeConcrete name typeParameters =
 isOperator x = elem x operators
 
 operators :: [Text]
-operators = ["==", "<=", ">=", "!=", "&&", "||",
+operators = ["==", "<=", ">=", "!=", "&&", "||", "-_",
     "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
 
 
