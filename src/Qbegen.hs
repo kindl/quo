@@ -120,7 +120,7 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     wasParam <- isParam name
     when wasParam (fail ("Parameter " ++ show name ++ " is constant and cannot be reassigned"))
     wasGlobal <- isGlobal name
-    when wasParam (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
+    when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal' rightHand
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (Definition (Name name ty) expression) = do
