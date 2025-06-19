@@ -20,8 +20,26 @@ data Env = Env [(Text, Type)] [(Text, [(Text, Type)])]
 baseEnv :: Env
 baseEnv =
     Env [
+        -- Equality
         ("==", FunctionType boolType [auto, auto]),
         ("!=", FunctionType boolType [auto, auto]),
+        -- Comparisons
+        ("<", FunctionType boolType [auto, auto]),
+        (">", FunctionType boolType [auto, auto]),
+        (">=", FunctionType boolType [auto, auto]),
+        ("<=", FunctionType boolType [auto, auto]),
+        -- Bool
+        ("!", FunctionType boolType [boolType]),
+        ("||", FunctionType boolType [boolType, boolType]),
+        ("&&", FunctionType boolType [boolType, boolType]),
+        -- Arithmetic
+        -- TODO return type
+        ("-_", FunctionType auto [auto]),
+        ("+", FunctionType auto [auto, auto]),
+        ("-", FunctionType auto [auto, auto]),
+        ("/", FunctionType auto [auto, auto]),
+        ("*", FunctionType auto [auto, auto]),
+
         ("nullptr", nullptrType)
     ] []
 
@@ -195,10 +213,13 @@ resolveExpression (DotAccess expression (Name name _) []) expectedType = do
 resolveExpression (Apply expression parameters) expectedType = do
     resolvedFunction <- resolveExpression expression auto
     case readType resolvedFunction of
-        FunctionType returnType parameterTypes ->
-            if subsumes returnType expectedType
-                then fmap (Apply resolvedFunction) (zipParameters resolveExpression parameters parameterTypes)
-                else fail ("Return type " ++ show returnType ++ " did not match " ++ show expectedType)
+        FunctionType returnType parameterTypes -> do
+            resolvedParameters <- zipParameters resolveExpression parameters parameterTypes
+            if returnType == auto
+                then return (resolveOperator resolvedFunction resolvedParameters)
+                else if subsumes returnType expectedType
+                    then return (Apply resolvedFunction resolvedParameters)
+                    else fail ("Return type " ++ show returnType ++ " did not match " ++ show expectedType)
         other ->
             fail ("Cannot apply expression " ++ show resolvedFunction ++ " without function type " ++ show other)
 resolveExpression (SquareAccess expression access) expectedType =
@@ -214,6 +235,18 @@ resolveExpression e@(Literal l) expectedType =
     in if subsumes ty expectedType
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
+
+-- TODO handle conversions
+resolveOperator (Variable (Name name _) []) [resolved] =
+    let
+        ty = readType resolved
+    in Apply (Variable (Name name (FunctionType ty [ty])) []) [resolved]
+resolveOperator (Variable (Name name _) []) [resolved1, resolved2] =
+    let
+        ty = readType resolved1
+    in Apply (Variable (Name name (FunctionType ty [ty, ty])) []) [resolved1, resolved2]
+resolveOperator other _ =
+    error ("Cannot resolve operator " ++ show other)
 
 substitute substitution m =
     let
