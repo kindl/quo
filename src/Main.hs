@@ -1,8 +1,8 @@
 module Main where
 
 import qualified Data.Text.IO as Text
-import Cgen
-import System.Environment
+import Cgen(prettyC)
+import System.Environment(getArgs)
 import qualified Statements
 import Expressions(parse)
 import Resolver(runResolve)
@@ -28,7 +28,7 @@ compile inputPath outputPath = do
     resolved <- runResolve specialized
     let outputBase = outputPath <> "/" <> takeBaseName inputPath
     let cOut = outputBase <> ".c"
-    Text.writeFile cOut (toText (toC resolved))
+    Text.writeFile cOut (toText (prettyC resolved))
     putStrLn ("Wrote " ++ cOut)
     qbe <- moduleToQbe resolved
     let qbeOut = outputBase <> ".qbe"
@@ -42,4 +42,4 @@ compile inputPath outputPath = do
     ccProcess <- readProcess "cc" [asmOut, "-o", objOut] ""
     putStrLn ccProcess
     putStrLn ("Wrote " ++ objOut)
-    putStrLn ("Done")
+    putStrLn "Done"
