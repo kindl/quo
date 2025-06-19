@@ -1,15 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Cgen where
+module Cgen(prettyC) where
 
 import Types
 import Data.Text(pack)
-import Prettyprinter((<+>))
+import Prettyprinter(Doc, (<+>), parens)
 import Helpers((<//>), intercalate, fromText, escape, indent)
 
 
-toC (Module _ s) = intercalate "\n\n" (fmap statementToC s)
+prettyC :: Module -> Doc ann
+prettyC (Module _ s) = intercalate "\n\n" (fmap statementToC s)
 
 
+statementToC :: Statement -> Doc ann
 statementToC (Definition name e) =
     nameToC name <+> "=" <+> expressionToC e <> ";"
 statementToC (Call e) = expressionToC e <> ";"
@@ -37,20 +39,26 @@ statementToC (While cond sts) = "while" <+> parens (expressionToC cond)
     <//> printBlock sts
 statementToC other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
 
+printIf :: (Expression, [Statement]) -> [(Expression, [Statement])] -> Doc ann
 printIf cond conds = intercalate "\n" (printIfPart cond : fmap printElseIfPart conds)
 
+printIfPart :: (Expression, [Statement]) -> Doc ann
 printIfPart (cond, sts) = "if" <+> parens (expressionToC cond)
     <//> printBlock sts
 
+printElseIfPart :: (Expression, [Statement]) -> Doc ann
 printElseIfPart cond = "else" <+> printIfPart cond
 
+printElsePart :: [Statement] -> Doc ann
 printElsePart sts = "else" <//> printBlock sts
 
+printBlock :: [Statement] -> Doc ann
 printBlock sts = "{"
     <//> indent (intercalate "\n" (fmap statementToC sts))
     <//> "}"
 
 -- Array size specifier come after the identifier in C
+nameToC :: Name -> Doc ann
 nameToC (Name name (ArrayType ty maybeSize)) =
     typeToC ty <+> fromText name <> (case maybeSize of
         Nothing -> "*"
@@ -58,16 +66,15 @@ nameToC (Name name (ArrayType ty maybeSize)) =
 nameToC (Name name ty) =
     typeToC ty <+> fromText name
 
-paramToC (e, ty) = typeToC ty <+> expressionToC e
-
+fieldToC :: Name -> Doc ann
 fieldToC name = nameToC name <> ";"
 
+expressionToC :: Expression -> Doc a
 expressionToC (Variable name []) = fromName name
 expressionToC (Literal l) = literalToC l
 -- Operators
 expressionToC (Apply (Variable (Name v _) _) [e1, e2]) | isOperator v =
     parensWrapped e1 <+> fromText v <+> parensWrapped e2
--- Non Operator Apply
 expressionToC (Apply e es) = expressionToC e <> parens (intercalate ", " (fmap expressionToC es))
 expressionToC (DotAccess e name []) =
     expressionToC e <> "." <> fromName name
@@ -76,8 +83,10 @@ expressionToC (SquareAccess e1 e2) =
 expressionToC (ArrayExpression es) =
     "[" <> intercalate ", " (fmap expressionToC es) <> "]"
 
+fromName :: Name -> Doc a
 fromName (Name n _) = fromText n
 
+literalToC :: Literal -> Doc a
 literalToC (Int32 l) = fromText (pack (show l))
 literalToC (Int64 l) = fromText (pack (show l)) <> "L"
 literalToC (Float32 l) = fromText (pack (show l)) <> "f"
@@ -87,13 +96,13 @@ literalToC (Bool False) = "false"
 literalToC (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 
 -- Possibly adds parens to avoid wrong precedence for operators
+parensWrapped :: Expression -> Doc a
 parensWrapped e =
     case e of
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (expressionToC e)
         _ -> expressionToC e
 
+typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
 typeToC (Concrete s []) = fromText s
 typeToC other = error ("Cannot print type of " ++ show other)
-
-parens x = "(" <> x <> ")"
