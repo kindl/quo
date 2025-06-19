@@ -1,17 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Resolver where
+module Resolver(runResolve, literalType, substitute, zipTypeParameters) where
 
 import Types
 import Control.Applicative(liftA2)
-import Control.Monad.Trans.Reader(runReaderT, asks, local, ReaderT)
+import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
 import Control.Monad(zipWithM, when)
 import Data.Text(Text)
 import qualified Data.Text as Text
-import Platte
+import Platte(transformBi)
 import Data.Maybe(fromMaybe)
 
 
-data Env = Env [(Text, Type)] [(Text, [(Text, Type)])]
+type TypeLookup = [(Text, Type)]
+
+type StructLookup = [(Text, [(Text, Type)])]
+
+data Env = Env TypeLookup StructLookup
 
 -- TODO handle operations on non matching types
 -- for example should the following be allowed or require an explicit conversion:
@@ -43,6 +47,7 @@ baseEnv =
         ("nullptr", nullptrType)
     ] []
 
+runResolve :: Module -> IO Module
 runResolve m = runReaderT (resolveModule m) baseEnv
 
 -- for a module:
@@ -50,6 +55,7 @@ runResolve m = runReaderT (resolveModule m) baseEnv
 -- gather the structs to bring "constructors" in scope
 -- resolve all definitions, they need to be in order
 -- resolve all function definitions, they do not need to be in order, because we have all necessary types from annotations
+resolveModule :: Module -> ReaderT Env IO Module
 resolveModule (Module name statements) =
     let
         annotations = gatherAnnotations statements
@@ -59,8 +65,10 @@ resolveModule (Module name statements) =
         return (Module name resolved)
 
 
+resolveDefinitions :: [Statement] -> ReaderT Env IO [Statement]
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
+resolveTop :: Statement -> ReaderT Env IO Statement
 resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
     resolved <- with (fmap nameToPair parameters) (resolveStatements body)
     let returnTypes = fmap getReturnType (getReturns resolved)
@@ -77,12 +85,14 @@ resolveTop i@(Import _ _) = return i
 resolveTop statement =
     fail ("Cannot resolve show " ++ show statement)
 
+getReturnType :: Maybe Expression -> Type
 getReturnType (Just e) = readType e
 getReturnType Nothing = voidType
 
 getReturns :: [Statement] -> [Maybe Expression]
 getReturns s = foldMap getReturn s
 
+getReturn :: Statement -> [Maybe Expression]
 getReturn (Return e) = [e]
 getReturn (If branches maybeElseBranch) =
     foldMap (getReturns . snd) branches ++ getReturns (concat maybeElseBranch)
@@ -92,17 +102,23 @@ getReturn (For _ _ statements) =
     getReturns statements
 getReturn _ = []
 
+getVariableEnv :: ReaderT Env IO TypeLookup
 getVariableEnv = asks (\(Env e _) -> e)
 
+getStructEnv :: ReaderT Env IO StructLookup
 getStructEnv = asks (\(Env _ e) -> e)
 
+with :: TypeLookup -> ReaderT Env m a -> ReaderT Env m a
 with env = local (\(Env variableEnv structEnv) -> Env (variableEnv <> env) structEnv)
 
+with' :: TypeLookup -> StructLookup -> ReaderT Env m a -> ReaderT Env m a
 with' e s = local (\(Env variableEnv structEnv) -> Env (variableEnv <> e) (structEnv <> s))
 
 
+resolveStatements :: [Statement] -> ReaderT Env IO [Statement]
 resolveStatements = foldr (resolveDefinition resolveStatement) (return mempty)
 
+resolveDefinition :: (Statement -> ReaderT Env IO Statement) -> Statement -> ReaderT Env IO [Statement] -> ReaderT Env IO [Statement]
 resolveDefinition _ (Definition (Name name annotatedType) value) rest = do
     resolved <- resolveExpression value annotatedType
     -- If the type was inferred, replace with the result type, otherwise leave it
@@ -114,6 +130,7 @@ resolveDefinition f statement rest = do
     rest' <- rest
     return (resolved:rest')
 
+resolveStatement :: Statement -> ReaderT Env IO Statement
 resolveStatement (Return maybeExpression) =
     fmap Return (traverse (\e -> resolveExpression e auto) maybeExpression)
 resolveStatement (Call expression) =
@@ -141,17 +158,22 @@ resolveStatement (Switch expression branches) = do
 resolveStatement statement =
     fail ("Unexpected definition statement " ++ show statement)
 
+resolveBranch :: Type -> (Expression, [Statement]) -> ReaderT Env IO (Expression, [Statement])
 resolveBranch conditionType (condition, statements) =
     liftA2 (,) (resolveExpression condition conditionType) (resolveStatements statements)
 
 
+nameToPair :: Name -> (Text, Type)
 nameToPair (Name n t) = (n, t)
 
+entry :: Text -> Type -> TypeLookup
 entry text value = [(text, value)]
 
 
+gatherAnnotations :: [Statement] -> TypeLookup
 gatherAnnotations = foldMap gatherAnnotation
 
+gatherAnnotation :: Statement -> TypeLookup
 gatherAnnotation (FunctionDefintion text [] returnType parameters _) =
     entry text (makeFunctionType returnType parameters)
 gatherAnnotation (StructDefinition text [] parameters) =
@@ -161,8 +183,10 @@ gatherAnnotation (ExternDefintion text returnType parameters) =
     entry text (makeFunctionType returnType parameters)
 gatherAnnotation _ = mempty
 
+gatherStructs :: [Statement] -> StructLookup
 gatherStructs = foldMap gatherStruct
 
+gatherStruct :: Statement -> StructLookup
 gatherStruct (StructDefinition text [] parameters) =
     [(text, fmap nameToPair parameters)]
 gatherStruct _ = mempty
@@ -184,6 +208,7 @@ readType (ArrayExpression expressions) =
         ty = readType (head expressions)
     in ArrayType ty (Just (fromIntegral (length expressions)))
 
+literalType :: Literal -> Type
 literalType (StringLiteral l) = ArrayType (Concrete "char" []) (Just (fromIntegral (Text.length l + 1)))
 literalType (Bool _) = boolType
 literalType (Int32 _) = intType
@@ -237,6 +262,7 @@ resolveExpression e@(Literal l) expectedType =
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 
 -- TODO handle conversions
+resolveOperator :: Expression -> [Expression] -> Expression
 resolveOperator (Variable (Name name _) []) [resolved] =
     let
         ty = readType resolved
@@ -271,6 +297,7 @@ zipTypeParameters xs ys =
         then zip xs ys
         else error ("Expected " ++ show leftLength ++ " type parameters, but received " ++ show rightLength)
 
+subsumes :: Type -> Type -> Bool
 subsumes a _ | a == auto = error "auto on left hand"
 subsumes _ b | b == auto = True
 -- TODO find a solution for passing arrays to functions expecting a pointer

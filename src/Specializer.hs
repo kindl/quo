@@ -1,13 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Specializer where
+module Specializer(specializeModule) where
 
 import Types
-import Control.Monad.Trans.Reader(runReaderT, ask)
+import Control.Monad.Trans.Reader(ReaderT, runReaderT, ask)
 import Control.Monad.Trans.Class(lift)
-import Data.IORef
-import Platte
-import Resolver
+import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
+import Platte(transformBiM)
+import Resolver(substitute, zipTypeParameters)
 import Data.List(partition, nub)
+import Data.Text(Text)
 
 
 -- * grab all generic function and struct definitions
@@ -25,6 +26,9 @@ import Data.List(partition, nub)
 -- * because a call like alloc<int>() is just transformed into alloc__int(),
 --     we could allow users to just provide an alloc__int() themselves and check if the parameters and return type match
 
+type TemplateName = (Text, [Type])
+
+specializeModule :: Module -> IO Module
 specializeModule (Module name defs) =
     let
         (genericDefs, concreteDefs) = partition hasTypeParameters defs
@@ -32,6 +36,7 @@ specializeModule (Module name defs) =
         specialized <- specializeDefinitions [] genericDefs concreteDefs
         return (Module name specialized)
 
+specializeDefinitions :: [TemplateName] -> [Statement] -> [Statement] -> IO [Statement]
 specializeDefinitions alreadyGenerated genericDefs concreteDefs = do
     putStrLn ("Running specialize definitions. " ++ show alreadyGenerated ++ " " ++ show (length genericDefs) ++ " " ++ show (length concreteDefs))
     referencedRef <- newIORef []
@@ -48,6 +53,7 @@ specializeDefinitions alreadyGenerated genericDefs concreteDefs = do
             specializedDefs <- specializeDefinitions (alreadyGenerated ++ generatedNames) genericDefs generatedDefs
             return (modifiedStatements ++ specializedDefs)
 
+specialize :: [Statement] -> ReaderT (IORef [TemplateName]) IO [Statement]
 specialize m =
     let
         f e@(Variable _ []) =
@@ -75,20 +81,25 @@ specialize m =
         m' <- transformBiM g m
         transformBiM f m'
 
+filterRequired :: (Foldable t, Eq a) => [a] -> t a -> [a]
 filterRequired xs ys = filter (\x -> notElem x ys) xs
 
+generateDefinitions :: [Statement] -> [TemplateName] -> ([TemplateName], [Statement])
 generateDefinitions genericDefs required =
     unzip (fmap (uncurry (generateDefinition genericDefs)) required)
 
+generateDefinition :: [Statement] -> Text -> [Type] -> ((Text, [Type]), Statement)
 generateDefinition genericDefs genericName typeParameters =
     case lookupDefinition genericName genericDefs of
         Nothing -> error ("Missing generic definition " ++ show genericName)
         Just def -> ((genericName, typeParameters), instantiate genericName typeParameters def)
 
+ensureInstance :: Text -> [Type] -> ReaderT (IORef [TemplateName]) IO ()
 ensureInstance name typeParameters = do
     ref <- ask
     lift (modifyIORef' ref (\e -> (name, typeParameters):e))
 
+instantiate :: Text -> [Type] -> Statement -> Statement
 instantiate genericName typeParameters (StructDefinition _ functionTypeParameters fields) =
     let
         concreteName = concretize genericName typeParameters
@@ -105,24 +116,29 @@ instantiate genericName typeParameters (FunctionDefintion _ functionTypeParamete
     in FunctionDefintion concreteName [] returnType' parameters' body'
 instantiate _ _ statement = error ("Expected definition for instantiate, but was " ++ show statement)
 
-
+hasTypeParameters :: Statement -> Bool
 hasTypeParameters (FunctionDefintion _ (_:_) _ _ _) = True
 hasTypeParameters (StructDefinition _ (_:_) _) = True
 hasTypeParameters _ = False
 
+lookupDefinition :: Text -> [Statement] -> Maybe Statement
 lookupDefinition _ [] = Nothing
 lookupDefinition name (def:rest) =
     if getName def == name then Just def else lookupDefinition name rest
 
+getName :: Statement -> Text
 getName (FunctionDefintion name _ _ _ _) = name
 getName (StructDefinition name _ _) = name
 getName statement = error ("Expected definition for getName, but was " ++ show statement)
 
+isSpecial :: Text -> Bool
 isSpecial name = elem name ["sizeof", "Pointer"]
 
+concretize :: Text -> [Type] -> Text
 concretize name typeParameters =
     foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap compactName typeParameters)
 
+compactName :: Type -> Text
 compactName (Concrete name []) = name
 compactName (PointerType ty) = compactName ty <> "ptr"
 compactName ty = error ("Failed pretty " ++ show ty)
