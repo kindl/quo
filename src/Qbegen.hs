@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Qbegen where
+module Qbegen(moduleToQbe, prettyMod) where
 
 import Data.Text(Text, pack)
 import Types
-import Resolver(readType, literalType)
-import Cgen(parens)
-import Data.IORef
+import Resolver(literalType)
+import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
 import Control.Monad(when)
-import Control.Monad.Trans.Reader(runReaderT, asks, ReaderT, local)
+import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
 import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
 import Data.Int(Int32)
-import Prettyprinter((<+>), Doc)
+import Prettyprinter((<+>), Doc, parens)
 import Helpers((<//>), indent, fromText, intercalate, escape)
 
 
 -- Ident does not contain a sigil, while Val does
 type Ident = Text
+
 type Val = Text
 
 type Ty = Text
@@ -63,10 +63,12 @@ emit instruction = do
     ref <- asks (\(Builder _ _ _ _ instructions) -> instructions)
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
+withParameters :: [Text] -> ReaderT Builder m a -> ReaderT Builder m a
 withParameters params action =
     local (\(Builder globals _ uniques stringDefs instructions) ->
         Builder globals params uniques stringDefs instructions) action
 
+withFreshBuilder :: ReaderT Builder IO () -> ReaderT Builder IO [Block]
 withFreshBuilder action = do
     instructions <- lift (newIORef [])
     local (\(Builder params globals uniques stringDefs _) -> Builder params globals uniques stringDefs instructions) action
@@ -85,12 +87,14 @@ isParam name = do
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
+bodyToBlock :: [Text] -> [Statement] -> ReaderT Builder IO ()
 bodyToBlock parameters statements =
     let
         locals = getDefs statements
     in withParameters parameters
         (traverse_ emitAlloc locals >> toBlock statements)
 
+emitAlloc :: Name -> ReaderT Builder IO ()
 emitAlloc (Name name ty) =
     emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
 
@@ -98,6 +102,7 @@ emitAlloc (Name name ty) =
 getDefs :: [Statement] -> [Name]
 getDefs = foldMap getDef
 
+getDef :: Statement -> [Name]
 getDef (Definition name _) = [name]
 getDef (If branches maybeElseBranch) =
     foldMap (getDefs . snd) branches ++ getDefs (concat maybeElseBranch)
@@ -170,15 +175,19 @@ statementToBlock s = fail ("TODO " ++ show s)
 
 -- TODO calculate sizes
 -- we either need a struct environment or annotate sizes in a previous pass
+getSizeAsVal :: Type -> Text
 getSizeAsVal ty = pack (show (getSize ty))
 
+getAlignmentAsText :: Type -> Text
 getAlignmentAsText ty = pack (show (getAlignment ty))
 
+getAlignment :: Type -> Int32
 getAlignment (PointerType _) = 8
 getAlignment (Concrete "int" []) = 4
 -- TODO
 getAlignment _ = 4
 
+pointerSize :: Int32
 pointerSize = 8
 
 getSize :: Type -> Int32
@@ -234,6 +243,7 @@ expressionToVal (Apply expression expressions) = do
     emit (CallInstruction freshIdent returnType val vals)
     return (returnType, "%" <> freshIdent)
 
+emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
 emitOperator ident qbeTy "-_" [(_, val)] =
     emit (Instruction ident qbeTy "neg" [val])
 emitOperator ident qbeTy "!" [(_, val)] =
@@ -242,9 +252,10 @@ emitOperator ident qbeTy op [(qbeTy1, val1), (qbeTy2, val2)] =
     if qbeTy1 == qbeTy2
         then emitOperator' ident qbeTy op qbeTy1 val1 val2
         else fail ("Emit operator: Wrong type " ++ show qbeTy1 ++ " " ++ show qbeTy2)
-emitOperator ident qbeTy op vals =
+emitOperator _ _ _ _ =
     fail "Emit operator: Wrong args"
 
+emitOperator' :: Ident -> Ty -> Text -> Ident -> Val -> Val -> ReaderT Builder IO ()
 emitOperator' ident qbeTy "+" _ val1 val2 =
     emit (Instruction ident qbeTy "add" [val1, val2])
 emitOperator' ident qbeTy "-" _ val1 val2 =
@@ -279,11 +290,13 @@ literalToText (Float64 l) = "d_" <> pack (show l)
 literalToText (Bool True) = "true"
 literalToText (Bool False) = "false"
 
+pointerTy :: Ty
 pointerTy = "l"
 
+voidTy :: Ty
 voidTy = ""
 
-toQbeTy :: Type -> Text
+toQbeTy :: Type -> Ty
 toQbeTy (Concrete "void" []) = voidTy
 toQbeTy (Concrete "char" []) = "b"
 toQbeTy (Concrete "bool" []) = "w"
@@ -310,6 +323,7 @@ registerConstant str = do
 
 
 -- Pretty Printing to Qbe format
+moduleToQbe :: Module -> IO Mod
 moduleToQbe (Module name statements) = do
     uniques <- newIORef 0
     stringDefs <- newIORef []
@@ -333,12 +347,15 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     return [FuncDef (toQbeTy ty) name qbeParams blocks]
 statementToDef _ = return []
 
+getGlobalNames :: [Statement] -> [Text]
 getGlobalNames = foldMap getGlobalName
 
+getGlobalName :: Statement -> [Text]
 getGlobalName (Definition (Name name _) _) = [name]
 getGlobalName (FunctionDefintion name _ _ _ _) = [name]
 getGlobalName _ = []
 
+prettyMod :: Mod -> Doc ann
 prettyMod (Mod name defs) =
     fromText "# Compiled from" <+> fromText name
     <//> intercalate "\n\n" (fmap prettyDef defs)
@@ -356,10 +373,10 @@ prettyData :: (Ty, Val) -> Doc a
 prettyData = prettyParam
 
 
-prettyTy :: Text -> Doc a
+prettyTy :: Ty -> Doc a
 prettyTy ty = fromText ty
 
-prettyVal :: Text -> Doc a
+prettyVal :: Val -> Doc a
 prettyVal val = fromText val
 
 prettyDef :: Def -> Doc a
@@ -381,7 +398,7 @@ prettyDef (TypeDef ident fields) =
 
 prettyBlock :: Block -> Doc a
 prettyBlock (Instruction ident ty instr parameters) =
-    indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> fromText instr <+> (intercalate ", " (fmap prettyVal parameters)))
+    indent ("%" <> fromText ident <+> "=" <> prettyTy ty <+> fromText instr <+> intercalate ", " (fmap prettyVal parameters))
 prettyBlock (CallInstruction ident ty f parameters) =
     indent ((if ty == voidTy
         then ""
