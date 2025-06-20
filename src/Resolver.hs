@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Resolver(runResolve, literalType, substitute, zipTypeParameters) where
+module Resolver(StructLookup, runResolve, literalType, readType,
+    substitute, zipParameters, zipTypeParameters, gatherStructs) where
 
 import Types
 import Control.Applicative(liftA2)
@@ -9,7 +10,7 @@ import Data.Text(Text)
 import qualified Data.Text as Text
 import Platte(transformBi)
 import Data.Maybe(fromMaybe)
-
+import Helpers(find)
 
 type TypeLookup = [(Text, Type)]
 
@@ -304,7 +305,3 @@ subsumes _ b | b == auto = True
 subsumes (ArrayType elementType _) (PointerType pointerType) =
     subsumes elementType pointerType
 subsumes a b = a == b
-
-find name env = case lookup name env of
-    Nothing -> fail ("Cannot find name " ++ show name ++ " in env " ++ show env)
-    Just found -> return found
