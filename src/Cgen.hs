@@ -28,9 +28,9 @@ statementToC (Import _ _) = ""
 statementToC (ExternDefintion name returnType parameters) =
     typeToC returnType <+> fromText name <> parens (intercalate ", " (fmap nameToC parameters)) <>";"
 statementToC (StructDefinition name [] parameters) =
-    "typedef struct {"
+    "struct" <+> fromText name <+> "{"
         <//> indent (intercalate "\n" (fmap fieldToC parameters))
-        <//> "}" <+> fromText name <> ";"
+        <//> "}" <> ";"
 statementToC (If (cond:conds) Nothing) =
     printIf cond conds
 statementToC (If (cond:conds) (Just th)) =
@@ -75,6 +75,9 @@ expressionToC (Literal l) = literalToC l
 -- Operators
 expressionToC (Apply (Variable (Name v _) _) [e1, e2]) | isOperator v =
     parensWrapped e1 <+> fromText v <+> parensWrapped e2
+expressionToC (Apply (Variable n@(Name v _) _) es) | isConstructor n =
+    parens ("struct" <+> fromText v)
+        <> "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 expressionToC (Apply e es) = expressionToC e <> parens (intercalate ", " (fmap expressionToC es))
 expressionToC (DotAccess e name []) =
     expressionToC e <> "." <> fromName name
@@ -102,7 +105,16 @@ parensWrapped e =
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (expressionToC e)
         _ -> expressionToC e
 
+isConstructor (Name name (FunctionType (Concrete structName []) _)) =
+    name == structName
+isConstructor (Name _ _) = False
+
 typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
-typeToC (Concrete s []) = fromText s
+typeToC (Concrete "char" []) = "char"
+typeToC (Concrete "int" []) = "int"
+typeToC (Concrete "long" []) = "long long int"
+typeToC (Concrete "float" []) = "float"
+typeToC (Concrete "double" []) = "double"
+typeToC (Concrete s []) = "struct" <+> fromText s
 typeToC other = error ("Cannot print type of " ++ show other)
