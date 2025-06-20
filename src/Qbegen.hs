@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Qbegen(moduleToQbe, prettyMod) where
 
-import Data.Text(Text, pack)
+import Data.Text(Text, pack, isPrefixOf)
 import Types
-import Resolver(literalType)
+import Resolver(StructLookup, readType, literalType, gatherStructs, zipParameters)
 import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
 import Control.Monad(when)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
@@ -11,7 +11,7 @@ import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
 import Data.Int(Int32)
 import Prettyprinter((<+>), Doc, parens)
-import Helpers((<//>), indent, fromText, intercalate, escape)
+import Helpers((<//>), find, indent, fromText, intercalate, escape)
 
 
 -- Ident does not contain a sigil, while Val does
@@ -37,22 +37,21 @@ data Def =
     | TypeDef Ident [Ty]
     | FuncDef Ty Ident [(Ty, Ident)] [Block]
 
-data Builder = Builder
-    -- List of global names for determining sigil
-    [Text]
-    -- List of parameters
-    [Text]
-    -- Name supply
-    (IORef Int)
-    -- Global data for string literals
-    (IORef [Def])
-    -- Instructions
-    (IORef [Block])
-
+data Builder = Builder {
+    -- List of global names and parameter names for determining sigil
+    getGlobals :: [Text],
+    getParameters :: [Text],
+    getNameSupply :: IORef Int,
+    getStringLiterals :: IORef [Def],
+    getStructs :: StructLookup,
+    -- Per function
+    getAllocs :: IORef [Block],
+    getInstructions :: IORef [Block]
+}
 
 newUnique :: ReaderT Builder IO Int
 newUnique = do
-    ref <- asks (\(Builder _ _ supply _ _) -> supply)
+    ref <- asks getNameSupply
     lift (modifyIORef' ref succ >> readIORef ref)
 
 newIdent :: Text -> ReaderT Builder IO Text
@@ -60,57 +59,50 @@ newIdent prefix = fmap (\i -> prefix <> pack (show i)) newUnique
 
 emit :: Block -> ReaderT Builder IO ()
 emit instruction = do
-    ref <- asks (\(Builder _ _ _ _ instructions) -> instructions)
+    ref <- asks getInstructions
+    lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
+
+emitAlloc name ty = do
+    ref <- asks getAllocs
+    size <- getSizeAsVal ty
+    let instruction = Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [size]
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
 withParameters :: [Text] -> ReaderT Builder m a -> ReaderT Builder m a
 withParameters params action =
-    local (\(Builder globals _ uniques stringDefs instructions) ->
-        Builder globals params uniques stringDefs instructions) action
+    local (\(Builder globals _ uniques stringDefs structs instructions allocs) ->
+        Builder globals params uniques stringDefs structs instructions allocs) action
 
 withFreshBuilder :: ReaderT Builder IO () -> ReaderT Builder IO [Block]
 withFreshBuilder action = do
+    allocs <- lift (newIORef [])
     instructions <- lift (newIORef [])
-    local (\(Builder params globals uniques stringDefs _) -> Builder params globals uniques stringDefs instructions) action
-    lift (readIORef instructions)
+    local (\(Builder params globals uniques stringDefs structs _ _) -> Builder params globals uniques stringDefs structs allocs instructions) action
+    a <- lift (readIORef allocs)
+    i <- lift (readIORef instructions)
+    return (a ++ i)
 
 isGlobal :: Text -> ReaderT Builder IO Bool
 isGlobal name = do
-    globalNames <- asks (\(Builder g _ _ _ _) -> g)
+    globalNames <- asks getGlobals
     return (elem name globalNames)
-    
+
 isParam :: Text -> ReaderT Builder IO Bool
 isParam name = do
-    params <- asks (\(Builder _ p _ _ _) -> p)
+    params <- asks getParameters
     return (elem name params)
+
+isStruct :: Text -> ReaderT Builder IO Bool
+isStruct name = do
+    structEnv <- asks getStructs
+    return (elem name (fmap fst structEnv))
 
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
 bodyToBlock :: [Text] -> [Statement] -> ReaderT Builder IO ()
 bodyToBlock parameters statements =
-    let
-        locals = getDefs statements
-    in withParameters parameters
-        (traverse_ emitAlloc locals >> toBlock statements)
-
-emitAlloc :: Name -> ReaderT Builder IO ()
-emitAlloc (Name name ty) =
-    emit (Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [getSizeAsVal ty])
-
-
-getDefs :: [Statement] -> [Name]
-getDefs = foldMap getDef
-
-getDef :: Statement -> [Name]
-getDef (Definition name _) = [name]
-getDef (If branches maybeElseBranch) =
-    foldMap (getDefs . snd) branches ++ getDefs (concat maybeElseBranch)
-getDef (While _ statements) =
-    getDefs statements
-getDef (For _ _ statements) =
-    getDefs statements
-getDef _ = []
+    withParameters parameters (toBlock statements)
 
 statementToBlock :: Statement -> ReaderT Builder IO ()
 statementToBlock (Return Nothing) =
@@ -129,9 +121,10 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     val <- expressionToVal' rightHand
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (Definition (Name name ty) expression) = do
-    -- The allocation for locals are not done here, but per function.
+    -- The allocation for locals are not emitted here, but per function.
     -- This is necessary so that we do not keep reallocating,
     -- for example in a while-loop
+    emitAlloc name ty
     val <- expressionToVal' expression
     emit (Store (toQbeTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
@@ -171,35 +164,65 @@ statementToBlock (While condition statements) = do
     toBlock statements
     emit (Jump continueLabel)
     emit (Label breakLabel)
-statementToBlock s = fail ("TODO " ++ show s)
+statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
--- TODO calculate sizes
--- we either need a struct environment or annotate sizes in a previous pass
-getSizeAsVal :: Type -> Text
-getSizeAsVal ty = pack (show (getSize ty))
+getSizeAsVal ty = do
+    size <- getSize ty
+    return (pack (show size))
 
 getAlignmentAsText :: Type -> Text
 getAlignmentAsText ty = pack (show (getAlignment ty))
 
 getAlignment :: Type -> Int32
-getAlignment (PointerType _) = 8
+getAlignment (Concrete "char" []) = 1
 getAlignment (Concrete "int" []) = 4
--- TODO
+getAlignment (Concrete "long" []) = 8
+getAlignment (Concrete "float" []) = 4
+getAlignment (Concrete "double" []) = 8
+getAlignment (PointerType _) = 8
+-- TODO alignment for structs
+-- Should all be 1
 getAlignment _ = 4
+--getAlignment other = error ("Cannot get alignment of " ++ show other)
+
+findFields (Concrete structName []) = do
+    structEnv <- asks getStructs
+    find structName structEnv
+findFields ty =
+    fail ("Cannot get field of non struct type" ++ show ty)
+
+getOffsetAsVal name fields = do
+    offset <- getOffset name fields
+    return (pack (show offset))
+
+getOffset name [] = fail ("Did not encounter field " ++ show name)
+getOffset name ((fieldName, ty):fields) =
+    if name == fieldName
+        then return 0
+        else do
+            s <- getSize ty
+            o <- getOffset name fields
+            return (s + o)
 
 pointerSize :: Int32
 pointerSize = 8
 
-getSize :: Type -> Int32
-getSize (Concrete "char" []) = 1
-getSize (Concrete "int" []) = 4
-getSize (Concrete "long" []) = 8
-getSize (Concrete "float" []) = 4
-getSize (Concrete "double" []) = 8
-getSize (PointerType _) = pointerSize
-getSize (ArrayType ty (Just size)) = getSize ty * size
+getSize :: Type -> ReaderT Builder IO Int32
+getSize (Concrete "char" []) = return 1
+getSize (Concrete "int" []) = return 4
+getSize (Concrete "long" []) = return 8
+getSize (Concrete "float" []) = return 4
+getSize (Concrete "double" []) = return 8
+getSize (PointerType _) = return pointerSize
+getSize (ArrayType ty (Just arraySize)) = do
+    elementSize <- getSize ty
+    return (elementSize * arraySize)
+getSize ty@(Concrete _ []) = do
+    fields <- findFields ty
+    sizes <- traverse (getSize . snd) fields
+    return (sum sizes)
 --getSize (ArrayType ty Nothing) = pointerSize
-getSize other = error ("Cannot determine size of type " ++ show other)
+getSize other = fail ("Cannot determine size of type " ++ show other)
 
 expressionToVal' :: Expression -> ReaderT Builder IO Ident
 expressionToVal' e = do
@@ -211,7 +234,7 @@ expressionToVal (Variable (Name name ty) []) = do
     let qbeTy = toQbeTy ty
     wasParam <- isParam name
     if wasParam
-        then return (qbeTy, "%" <> name) 
+        then return (qbeTy, "%" <> name)
         else do
             freshIdent <- newIdent ".local"
             wasGlobal <- isGlobal name
@@ -224,24 +247,38 @@ expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
 expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
-    -- Turn a nested call like f(g())
-    -- into
-    -- %a = g()
-    -- f(%a)
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
     let qbeTy = toQbeTy returnType
+    wasStruct <- isStruct name
     if isOperator name
         then emitOperator freshIdent qbeTy name vals
-        -- TODO Investigate: Does qbe allow calling local functions?
-        else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
+        else if wasStruct
+            then emitStruct freshIdent returnType vals
+            else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
     return (qbeTy, "%" <> freshIdent)
+-- TODO Investigate: Does qbe allow calling local functions?
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
-    (returnType, val) <- expressionToVal expression
-    emit (CallInstruction freshIdent returnType val vals)
-    return (returnType, "%" <> freshIdent)
+    (qbeTy, val) <- expressionToVal expression
+    when (not (isPrefixOf "$" val)) (fail ("Is not a global function " ++ show val))
+    emit (CallInstruction freshIdent qbeTy val vals)
+    return (qbeTy, "%" <> freshIdent)
+expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
+    -- This will hold the offsetted pointer
+    offsetted <- newIdent ".local"
+    -- This will hold the read memory
+    freshIdent <- newIdent ".local"
+    val <- expressionToVal' expression
+    let structType = readType expression
+    fields <- findFields structType
+    offset <- getOffsetAsVal fieldName fields
+    emit (Instruction offsetted pointerTy "add" [val, offset])
+    let qbeTy = toQbeTy fieldType
+    if isPrefixOf ":" qbeTy
+        then return (qbeTy, "%" <> offsetted)
+        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -277,6 +314,20 @@ emitOperator' ident qbeTy ">=" argQbeTy val1 val2 =
 emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
+
+emitStruct ident structTy vals = do
+    emitAlloc ident structTy
+    fields <- findFields structTy
+    zipParameters (emitField fields ident) fields vals
+    return ()
+
+emitField fields ident (fieldName, fieldType) (qbeTy, val) = do
+    offsetted <- newIdent ".local"
+    offset <- getOffset fieldName fields
+    let offsetVal = pack (show offset)
+    emit (Instruction offsetted pointerTy "add" ["%" <> ident, offsetVal])
+    -- TODO ensure that qbeTy is a base type
+    emit (Store qbeTy val ("%" <> offsetted))
 
 literalToVal :: Literal -> ReaderT Builder IO Val
 literalToVal (StringLiteral str) = registerConstant str
@@ -316,7 +367,7 @@ newLabel = newIdent
 registerConstant :: Text -> ReaderT Builder IO Text
 registerConstant str = do
     freshName <- newIdent "string"
-    ref <- asks (\(Builder _ _ _ stringDefs _) -> stringDefs)
+    ref <- asks getStringLiterals
     let escaped = "\"" <> escape str <> "\\000\""
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
     return ("$" <> freshName)
@@ -328,11 +379,14 @@ moduleToQbe (Module name statements) = do
     uniques <- newIORef 0
     stringDefs <- newIORef []
     instructions <- newIORef []
-    let globalNames = getGlobalNames statements
-    let baseBuilder = Builder globalNames [] uniques stringDefs instructions
+    allocs <- newIORef []
+    let globalNames = gatherGlobalNames statements
+    let structs = gatherStructs statements
+    let baseBuilder = Builder globalNames [] uniques stringDefs structs instructions allocs
+    let typeDefs = foldMap structToDef statements
     defs <- runReaderT (traverse statementToDef statements) baseBuilder
     createdStringDefs <- readIORef stringDefs
-    return (Mod name (createdStringDefs ++ concat defs))
+    return (Mod name (typeDefs ++ createdStringDefs ++ concat defs))
 
 -- Top level
 statementToDef :: Statement -> ReaderT Builder IO [Def]
@@ -347,13 +401,17 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     return [FuncDef (toQbeTy ty) name qbeParams blocks]
 statementToDef _ = return []
 
-getGlobalNames :: [Statement] -> [Text]
-getGlobalNames = foldMap getGlobalName
+structToDef (StructDefinition ident [] fields) =
+    [TypeDef ident (fmap (\(Name _ ty) -> toQbeTy ty) fields)]
+structToDef _ = []
 
-getGlobalName :: Statement -> [Text]
-getGlobalName (Definition (Name name _) _) = [name]
-getGlobalName (FunctionDefintion name _ _ _ _) = [name]
-getGlobalName _ = []
+gatherGlobalNames :: [Statement] -> [Text]
+gatherGlobalNames = foldMap gatherGlobalName
+
+gatherGlobalName :: Statement -> [Text]
+gatherGlobalName (Definition (Name name _) _) = [name]
+gatherGlobalName (FunctionDefintion name _ _ _ _) = [name]
+gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann
 prettyMod (Mod name defs) =
