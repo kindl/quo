@@ -39,6 +39,8 @@ doubleType = Concrete "double" []
 nullptrType :: Type
 nullptrType = PointerType (Concrete "void" [])
 
+usizeType :: Type
+usizeType = Concrete "usize" []
 
 makeFunctionType :: ReturnType -> [Parameter] -> Type
 makeFunctionType returnType parameters =

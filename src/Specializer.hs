@@ -131,8 +131,9 @@ getName (FunctionDefintion name _ _ _ _) = name
 getName (StructDefinition name _ _) = name
 getName statement = error ("Expected definition for getName, but was " ++ show statement)
 
+-- These receive type parameters, but cannot be specialized, because they have no definition
 isSpecial :: Text -> Bool
-isSpecial name = elem name ["sizeof", "Pointer"]
+isSpecial name = elem name ["sizeof", "cast", "Pointer"]
 
 concretize :: Text -> [Type] -> Text
 concretize name typeParameters =

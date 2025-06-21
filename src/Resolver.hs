@@ -218,6 +218,8 @@ literalType (Float32 _) = floatType
 literalType (Float64 _) = doubleType
 
 resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
+resolveExpression (Variable (Name "sizeof" _) [ty]) expectedType =
+    return (Variable (Name "sizeof" (FunctionType usizeType [])) [ty])
 resolveExpression (Variable (Name name _) []) expectedType = do
     env <- getVariableEnv
     ty <- find name env
@@ -236,6 +238,13 @@ resolveExpression (DotAccess expression (Name name _) []) expectedType = do
                 else fail ("Actual type " ++ show fieldType ++ " did not match " ++ show expectedType)
         -- TODO special case for built-in types like Pointer<T>
         other -> fail ("Cannot access non-struct type" ++ show other)
+resolveExpression (Apply (Variable (Name "cast" _) [resultType]) [parameter]) expectedType = do
+    resolvedParameter <- resolveExpression parameter auto
+    let parameterType = readType resolvedParameter
+    let castFunctionType = FunctionType resultType [parameterType]
+    if subsumes resultType expectedType
+        then return (Apply (Variable (Name "cast" castFunctionType) [resultType]) [resolvedParameter])
+        else fail ("Cast type " ++ show resultType ++ " did not match expected type " ++ show expectedType)
 resolveExpression (Apply expression parameters) expectedType = do
     resolvedFunction <- resolveExpression expression auto
     case readType resolvedFunction of
@@ -261,6 +270,7 @@ resolveExpression e@(Literal l) expectedType =
     in if subsumes ty expectedType
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
+resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
 
 -- TODO handle conversions
 resolveOperator :: Expression -> [Expression] -> Expression
