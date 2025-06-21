@@ -167,7 +167,8 @@ statementToBlock (While condition statements) = do
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
 getSizeAsVal ty = do
-    size <- getSize ty
+    structEnv <- asks getStructs
+    let size = getSize structEnv ty
     return (pack (show size))
 
 getAlignmentAsText :: Type -> Text
@@ -200,29 +201,30 @@ getOffset name ((fieldName, ty):fields) =
     if name == fieldName
         then return 0
         else do
-            s <- getSize ty
+            structEnv <- asks getStructs
+            let s = getSize structEnv ty
             o <- getOffset name fields
             return (s + o)
 
 pointerSize :: Int32
 pointerSize = 8
 
-getSize :: Type -> ReaderT Builder IO Int32
-getSize (Concrete "char" []) = return 1
-getSize (Concrete "int" []) = return 4
-getSize (Concrete "long" []) = return 8
-getSize (Concrete "float" []) = return 4
-getSize (Concrete "double" []) = return 8
-getSize (PointerType _) = return pointerSize
-getSize (ArrayType ty (Just arraySize)) = do
-    elementSize <- getSize ty
-    return (elementSize * arraySize)
-getSize ty@(Concrete _ []) = do
-    fields <- findFields ty
-    sizes <- traverse (getSize . snd) fields
-    return (sum sizes)
---getSize (ArrayType ty Nothing) = pointerSize
-getSize other = fail ("Cannot determine size of type " ++ show other)
+getSize structEnv (Concrete "char" []) = 1
+getSize structEnv (Concrete "int" []) = 4
+getSize structEnv (Concrete "long" []) = 8
+getSize structEnv (Concrete "float" []) = 4
+getSize structEnv (Concrete "double" []) = 8
+getSize structEnv (PointerType _) = pointerSize
+getSize structEnv (ArrayType ty (Just arraySize)) =
+    let elementSize = getSize structEnv ty
+    in elementSize * arraySize
+getSize structEnv ty@(Concrete structName []) =
+    case lookup structName structEnv of
+        Nothing -> error ("TODO")
+        Just fields ->
+            let sizes = fmap (getSize structEnv . snd) fields
+            in sum sizes
+getSize _ other = error ("Cannot determine size of type " ++ show other)
 
 expressionToVal' :: Expression -> ReaderT Builder IO Ident
 expressionToVal' e = do
