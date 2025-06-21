@@ -11,7 +11,7 @@ import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
 import Data.Int(Int32)
 import Prettyprinter((<+>), Doc, parens)
-import Helpers((<//>), find, indent, fromText, intercalate, escape)
+import Helpers((<//>), find, indent, fromText, intercalate, escape, isConstructor)
 
 
 -- Ident does not contain a sigil, while Val does
@@ -246,16 +246,15 @@ expressionToVal (Variable (Name name ty) []) = do
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
+expressionToVal (Apply (Variable n@(Name name (FunctionType returnType _)) []) expressions) | isConstructor n =
+    emitStruct returnType expressions
 expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
     let qbeTy = toQbeTy returnType
-    wasStruct <- isStruct name
     if isOperator name
         then emitOperator freshIdent qbeTy name vals
-        else if wasStruct
-            then emitStruct freshIdent returnType vals
-            else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
+        else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
     return (qbeTy, "%" <> freshIdent)
 -- TODO Investigate: Does qbe allow calling local functions?
 expressionToVal (Apply expression expressions) = do
@@ -276,7 +275,7 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetted pointerTy "add" [val, offset])
     let qbeTy = toQbeTy fieldType
-    if isPrefixOf ":" qbeTy
+    if isStructQbeTy qbeTy
         then return (qbeTy, "%" <> offsetted)
         else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
 
@@ -315,19 +314,55 @@ emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
-emitStruct ident structTy vals = do
-    emitAlloc ident structTy
-    fields <- findFields structTy
-    zipParameters (emitField fields ident) fields vals
-    return ()
+emitStruct structType expressions = do
+    ident <- newIdent ".local"
+    emitAlloc ident structType
+    fields <- findFields structType
+    zipParameters (emitField fields ident) fields expressions
+    let qbeTy = toQbeTy structType
+    return (qbeTy, "%" <> ident)
 
-emitField fields ident (fieldName, fieldType) (qbeTy, val) = do
-    offsetted <- newIdent ".local"
-    offset <- getOffset fieldName fields
-    let offsetVal = pack (show offset)
-    emit (Instruction offsetted pointerTy "add" ["%" <> ident, offsetVal])
-    -- TODO ensure that qbeTy is a base type
+-- Nested struct creation:
+-- When we have a struct Vector { int x, int y }
+-- and struct Matrix { Vector v, Vector w }
+-- and build it with Matrix(Vector(1, 2), Vector(3, 4))
+-- then we don't want to allocate the Vectors, we just want to allocate Matrix
+-- and assign the individual ints.
+emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
+    offsetted <- createOffset fields fieldName ("%" <> ident)
+    nestedFields <- findFields fieldType
+    zipParameters (emitField nestedFields offsetted) nestedFields expressions
+    return ()
+-- Nested struct copying:
+-- Matrix(Vector2Int(x, y), makeVector2Int(z))
+-- After creating a value, fields are copied one by one
+-- this probably could be reused for assigning structs
+emitField fields ident (fieldName, fieldType) expression | isStructQbeTy (toQbeTy fieldType) = do
+    offsetted <- createOffset fields fieldName ("%" <> ident)
+    nestedFields <- findFields fieldType
+    (qbeTy, val) <- expressionToVal expression
+    traverse_ (emitCopyField nestedFields ("%" <> offsetted) val) nestedFields
+-- For base types
+emitField fields ident (fieldName, fieldType) expression = do
+    offsetted <- createOffset fields fieldName ("%" <> ident)
+    (qbeTy, val) <- expressionToVal expression
     emit (Store qbeTy val ("%" <> offsetted))
+
+isStructQbeTy = isPrefixOf ":"
+
+createOffset fields fieldName val = do
+    offsetted <- newIdent ".local"
+    offset <- getOffsetAsVal fieldName fields
+    emit (Instruction offsetted pointerTy "add" [val, offset])
+    return offsetted
+
+emitCopyField fields left right (fieldName, fieldType) = do
+    leftOffsetted <- createOffset fields fieldName left
+    rightOffsetted <- createOffset fields fieldName right
+    let qbeTy = toQbeTy fieldType
+    loaded <- newIdent ".local"
+    emit (Instruction loaded qbeTy ("load" <> qbeTy) ["%" <> rightOffsetted])
+    emit (Store qbeTy ("%" <> loaded) ("%" <> leftOffsetted))
 
 literalToVal :: Literal -> ReaderT Builder IO Val
 literalToVal (StringLiteral str) = registerConstant str
