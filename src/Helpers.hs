@@ -4,7 +4,7 @@ module Helpers where
 import Data.Text(Text, replace)
 import Prettyprinter(Doc, pretty, line, vcat, indent, layoutPretty, defaultLayoutOptions)
 import Prettyprinter.Render.Text(renderStrict)
-
+import Types(Name(Name), Type(Concrete, FunctionType))
 
 -- TODO check if \0 escpae character works in QBE
 escape :: Text -> Text
@@ -44,3 +44,7 @@ toText d = renderStrict (layoutPretty defaultLayoutOptions d)
 find name env = case lookup name env of
     Nothing -> fail ("Cannot find name " ++ show name ++ " in env " ++ show env)
     Just found -> return found
+
+isConstructor (Name name (FunctionType (Concrete structName []) _)) =
+    name == structName
+isConstructor (Name _ _) = False

@@ -4,7 +4,7 @@ module Cgen(prettyC) where
 import Types
 import Data.Text(pack)
 import Prettyprinter(Doc, (<+>), parens)
-import Helpers((<//>), intercalate, fromText, escape, indent)
+import Helpers((<//>), intercalate, fromText, escape, indent, isConstructor)
 
 
 prettyC :: Module -> Doc ann
@@ -104,10 +104,6 @@ parensWrapped e =
     case e of
         (Apply (Variable (Name i _) _) _) | isOperator i -> parens (expressionToC e)
         _ -> expressionToC e
-
-isConstructor (Name name (FunctionType (Concrete structName []) _)) =
-    name == structName
-isConstructor (Name _ _) = False
 
 typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
