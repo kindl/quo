@@ -92,11 +92,6 @@ isParam name = do
     params <- asks getParameters
     return (elem name params)
 
-isStruct :: Text -> ReaderT Builder IO Bool
-isStruct name = do
-    structEnv <- asks getStructs
-    return (elem name (fmap fst structEnv))
-
 toBlock :: [Statement] -> ReaderT Builder IO ()
 toBlock = traverse_ statementToBlock
 
@@ -120,6 +115,11 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal' rightHand
     emit (Store (toQbeTy ty) val ("%" <> name))
+statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
+    emitAlloc ident structType
+    fields <- findFields structType
+    zipParameters (emitField fields ident) fields expressions
+    return ()
 statementToBlock (Definition (Name name ty) expression) = do
     -- The allocation for locals are not emitted here, but per function.
     -- This is necessary so that we do not keep reallocating,
@@ -233,7 +233,8 @@ expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name name ty) []) = do
     let qbeTy = toQbeTy ty
     wasParam <- isParam name
-    if wasParam
+    let wasStruct = isStructQbeTy qbeTy
+    if wasParam || wasStruct
         then return (qbeTy, "%" <> name)
         else do
             freshIdent <- newIdent ".local"
