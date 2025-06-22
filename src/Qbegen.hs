@@ -180,9 +180,10 @@ getAlignment (Concrete "int" []) = 4
 getAlignment (Concrete "long" []) = 8
 getAlignment (Concrete "float" []) = 4
 getAlignment (Concrete "double" []) = 8
+getAlignment (Concrete "usize" []) = 8
 getAlignment (PointerType _) = 8
--- TODO alignment for structs
--- Should all be 1
+-- TODO allow setting alignment of structs or getting default alignment,
+-- e.g. qbe uses the max alginment of the fields
 getAlignment _ = 4
 --getAlignment other = error ("Cannot get alignment of " ++ show other)
 
@@ -209,18 +210,19 @@ getOffset name ((fieldName, ty):fields) =
 pointerSize :: Int32
 pointerSize = 8
 
-getSize structEnv (Concrete "char" []) = 1
-getSize structEnv (Concrete "int" []) = 4
-getSize structEnv (Concrete "long" []) = 8
-getSize structEnv (Concrete "float" []) = 4
-getSize structEnv (Concrete "double" []) = 8
-getSize structEnv (PointerType _) = pointerSize
+getSize _ (Concrete "char" []) = 1
+getSize _ (Concrete "int" []) = 4
+getSize _ (Concrete "long" []) = 8
+getSize _ (Concrete "float" []) = 4
+getSize _ (Concrete "double" []) = 8
+getSize _ (Concrete "usize" []) = 8
+getSize _ (PointerType _) = pointerSize
 getSize structEnv (ArrayType ty (Just arraySize)) =
     let elementSize = getSize structEnv ty
     in elementSize * arraySize
 getSize structEnv ty@(Concrete structName []) =
     case lookup structName structEnv of
-        Nothing -> error ("TODO")
+        Nothing -> error ("Cannot determine size of type " ++ show ty ++ " because it was not in the environment" ++ show structEnv)
         Just fields ->
             let sizes = fmap (getSize structEnv . snd) fields
             in sum sizes
@@ -249,8 +251,18 @@ expressionToVal (Variable (Name name ty) []) = do
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
-expressionToVal (Apply (Variable n@(Name name (FunctionType returnType _)) []) expressions) | isConstructor n =
+expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
     emitStruct returnType expressions
+expressionToVal (Apply (Variable (Name "cast" _) [typeParameter]) [parameter]) = do
+    freshIdent <- newIdent ".local"
+    val <- expressionToVal' parameter
+    case typeParameter of
+        PointerType _ -> emit (Store pointerTy val ("%" <> freshIdent)) >> return (pointerTy, freshIdent)
+        _ -> fail ("Conversion to " ++ show typeParameter ++ " not implemented yet")
+expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [typeParameter]) _) = do
+    size <- getSizeAsVal typeParameter
+    let qbeTy = toQbeTy returnType
+    return (qbeTy, size)
 expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
@@ -378,6 +390,8 @@ literalToText (Float32 l) = "s_" <> pack (show l)
 literalToText (Float64 l) = "d_" <> pack (show l)
 literalToText (Bool True) = "true"
 literalToText (Bool False) = "false"
+literalToText (StringLiteral _) =
+    error "String literals have to be handled with literalToVal"
 
 pointerTy :: Ty
 pointerTy = "l"
@@ -391,6 +405,7 @@ toQbeTy (Concrete "char" []) = "b"
 toQbeTy (Concrete "bool" []) = "w"
 toQbeTy (Concrete "int" []) = "w"
 toQbeTy (Concrete "long" []) = "l"
+toQbeTy (Concrete "usize" []) = "uw"
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
