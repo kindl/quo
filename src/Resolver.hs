@@ -218,7 +218,9 @@ literalType (Float32 _) = floatType
 literalType (Float64 _) = doubleType
 
 resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
-resolveExpression (Variable (Name "sizeof" _) [ty]) expectedType =
+resolveExpression (Variable (Name "sizeof" _) [ty]) _ =
+    -- Checking the expected type here is mostly not necessary,
+    -- because functions are checked against auto first anyway
     return (Variable (Name "sizeof" (FunctionType usizeType [])) [ty])
 resolveExpression (Variable (Name name _) []) expectedType = do
     env <- getVariableEnv
