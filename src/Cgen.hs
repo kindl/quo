@@ -73,6 +73,10 @@ expressionToC :: Expression -> Doc a
 expressionToC (Variable name []) = fromName name
 expressionToC (Literal l) = literalToC l
 -- Operators
+expressionToC (Apply (Variable (Name "cast" _) [ty]) [expression]) =
+    parens (parens (typeToC ty) <> expressionToC expression)
+expressionToC (Apply (Variable (Name "sizeof" _) [ty]) []) =
+    "sizeof" <> parens (typeToC ty)
 expressionToC (Apply (Variable (Name v _) _) [e1, e2]) | isOperator v =
     parensWrapped e1 <+> fromText v <+> parensWrapped e2
 expressionToC (Apply (Variable n@(Name v _) _) es) | isConstructor n =
@@ -112,5 +116,6 @@ typeToC (Concrete "int" []) = "int"
 typeToC (Concrete "long" []) = "long long int"
 typeToC (Concrete "float" []) = "float"
 typeToC (Concrete "double" []) = "double"
+typeToC (Concrete "usize" []) = "size_t"
 typeToC (Concrete s []) = "struct" <+> fromText s
 typeToC other = error ("Cannot print type of " ++ show other)
