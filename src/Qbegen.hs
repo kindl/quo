@@ -210,6 +210,9 @@ getOffset name ((fieldName, ty):fields) =
 pointerSize :: Int32
 pointerSize = 8
 
+-- TODO does the return need to be Word64?
+-- When are structs that big?
+getSize :: StructLookup -> Type -> Int32
 getSize _ (Concrete "char" []) = 1
 getSize _ (Concrete "int" []) = 4
 getSize _ (Concrete "long" []) = 8
@@ -254,10 +257,8 @@ expressionToVal (Literal l) = do
 expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
     emitStruct returnType expressions
 expressionToVal (Apply (Variable (Name "cast" _) [typeParameter]) [parameter]) = do
-    freshIdent <- newIdent ".local"
-    val <- expressionToVal' parameter
     case typeParameter of
-        PointerType _ -> emit (Store pointerTy val ("%" <> freshIdent)) >> return (pointerTy, freshIdent)
+        PointerType _ -> expressionToVal parameter
         _ -> fail ("Conversion to " ++ show typeParameter ++ " not implemented yet")
 expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [typeParameter]) _) = do
     size <- getSizeAsVal typeParameter
@@ -405,7 +406,8 @@ toQbeTy (Concrete "char" []) = "b"
 toQbeTy (Concrete "bool" []) = "w"
 toQbeTy (Concrete "int" []) = "w"
 toQbeTy (Concrete "long" []) = "l"
-toQbeTy (Concrete "usize" []) = "uw"
+-- TODO unsiged type uw is not used for types, only for operators
+toQbeTy (Concrete "usize" []) = "l"
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
@@ -468,7 +470,7 @@ gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann
 prettyMod (Mod name defs) =
-    fromText "# Compiled from" <+> fromText name
+    fromText "# Compiled from" <+> fromText name <> ".quo"
     <//> intercalate "\n\n" (fmap prettyDef defs)
 
 -- For function definitions
