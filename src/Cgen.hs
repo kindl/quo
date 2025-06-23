@@ -8,8 +8,11 @@ import Helpers((<//>), intercalate, fromText, escape, indent, isConstructor)
 
 
 prettyC :: Module -> Doc ann
-prettyC (Module _ s) = intercalate "\n\n" (fmap statementToC s)
+prettyC (Module _ s) = preamble <> intercalate "\n\n" (fmap statementToC s)
 
+-- stddef is necessary for size_t
+preamble :: Doc ann
+preamble = fromText "// This file was generated with quo\n#include <stddef.h>\n\n"
 
 statementToC :: Statement -> Doc ann
 statementToC (Definition name e) =
@@ -111,6 +114,7 @@ parensWrapped e =
 
 typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
+typeToC (Concrete "void" []) = "void"
 typeToC (Concrete "char" []) = "char"
 typeToC (Concrete "int" []) = "int"
 typeToC (Concrete "long" []) = "long long int"
