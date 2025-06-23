@@ -31,10 +31,15 @@ type TemplateName = (Text, [Type])
 specializeModule :: Module -> IO Module
 specializeModule (Module name defs) =
     let
-        (genericDefs, concreteDefs) = partition hasTypeParameters defs
+        (permanents, changing) = partition isPermanent defs
+        (genericDefs, concreteDefs) = partition hasTypeParameters changing
     in do
         specialized <- specializeDefinitions [] genericDefs concreteDefs
-        return (Module name specialized)
+        -- TODO this needs proper dependency sorting
+        -- For now, structs come before functions and other definitions
+        -- so that they can refer to them in their types
+        let (structs, others) = partition isStructDefinition specialized
+        return (Module name (permanents ++ structs ++ others))
 
 specializeDefinitions :: [TemplateName] -> [Statement] -> [Statement] -> IO [Statement]
 specializeDefinitions alreadyGenerated genericDefs concreteDefs = do
@@ -51,7 +56,7 @@ specializeDefinitions alreadyGenerated genericDefs concreteDefs = do
             let (generatedNames, generatedDefs) = generateDefinitions genericDefs required
             -- The generated specializations can also contain generic calls and have to specialized
             specializedDefs <- specializeDefinitions (alreadyGenerated ++ generatedNames) genericDefs generatedDefs
-            return (modifiedStatements ++ specializedDefs)
+            return (specializedDefs ++ modifiedStatements)
 
 specialize :: [Statement] -> ReaderT (IORef [TemplateName]) IO [Statement]
 specialize m =
@@ -120,6 +125,15 @@ hasTypeParameters :: Statement -> Bool
 hasTypeParameters (FunctionDefintion _ (_:_) _ _ _) = True
 hasTypeParameters (StructDefinition _ (_:_) _) = True
 hasTypeParameters _ = False
+
+isPermanent :: Statement -> Bool
+isPermanent (Import _ _) = True
+isPermanent (ExternDefintion _ _ _) = True
+isPermanent _ = False
+
+isStructDefinition :: Statement -> Bool
+isStructDefinition (StructDefinition _ _ _) = True
+isStructDefinition _ = False
 
 lookupDefinition :: Text -> [Statement] -> Maybe Statement
 lookupDefinition _ [] = Nothing
