@@ -213,7 +213,9 @@ literalType :: Literal -> Type
 literalType (StringLiteral l) = ArrayType (Concrete "char" []) (Just (fromIntegral (Text.length l + 1)))
 literalType (Bool _) = boolType
 literalType (Int32 _) = intType
+literalType (UInt32 _) = uintType
 literalType (Int64 _) = longType
+literalType (UInt64 _) = ulongType
 literalType (Float32 _) = floatType
 literalType (Float64 _) = doubleType
 
@@ -230,16 +232,12 @@ resolveExpression (Variable (Name name _) []) expectedType = do
         else fail ("Actual type " ++ show ty ++ " did not match " ++ show expectedType)
 resolveExpression (DotAccess expression (Name name _) []) expectedType = do
     resolved <- resolveExpression expression auto
-    case readType resolved of
-        Concrete structName [] -> do
-            env <- getStructEnv
-            fields <- find structName env
-            fieldType <- find name fields
-            if subsumes fieldType expectedType
-                then return (DotAccess resolved (Name name fieldType) [])
-                else fail ("Actual type " ++ show fieldType ++ " did not match " ++ show expectedType)
-        -- TODO special case for built-in types like Pointer<T>
-        other -> fail ("Cannot access non-struct type" ++ show other)
+    let resolvedType = readType resolved
+    fields <- findFields resolvedType
+    fieldType <- find name fields
+    if subsumes fieldType expectedType
+        then return (DotAccess resolved (Name name fieldType) [])
+        else fail ("Actual type " ++ show fieldType ++ " did not match " ++ show expectedType)
 resolveExpression (Apply (Variable (Name "cast" _) [resultType]) [parameter]) expectedType = do
     resolvedParameter <- resolveExpression parameter auto
     let parameterType = readType resolvedParameter
@@ -317,3 +315,11 @@ subsumes _ b | b == auto = True
 subsumes (ArrayType elementType _) (PointerType pointerType) =
     subsumes elementType pointerType
 subsumes a b = a == b
+
+findFields (Concrete structName []) = do
+    structEnv <- getStructEnv
+    find structName structEnv
+findFields (PointerType innerTy) =
+    findFields innerTy
+findFields ty =
+    fail ("Cannot get field of non-struct type " ++ show ty)
