@@ -2,7 +2,8 @@
 module Types where
 
 import Data.Text(Text)
-import Data.Int(Int64, Int32)
+import Data.Int(Int32, Int64)
+import Data.Word(Word32, Word64)
 import Data.Data(Data, Typeable)
 
 
@@ -27,8 +28,14 @@ boolType = Concrete "bool" []
 intType :: Type
 intType = Concrete "int" []
 
+uintType :: Type
+uintType = Concrete "uint" []
+
 longType :: Type
 longType = Concrete "long" []
+
+ulongType :: Type
+ulongType = Concrete "ulong" []
 
 floatType :: Type
 floatType = Concrete "float" []
@@ -112,7 +119,9 @@ data Literal =
     StringLiteral Text
     | Bool Bool
     | Int32 Int32
+    | UInt32 Word32
     | Int64 Int64
+    | UInt64 Word64
     | Float32 Float
     | Float64 Double
         deriving (Eq, Show, Data, Typeable)
