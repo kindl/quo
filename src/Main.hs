@@ -11,6 +11,7 @@ import Qbegen(moduleToQbe, prettyMod)
 import Helpers(toText)
 import System.FilePath(takeBaseName)
 import System.Process(readProcess)
+import System.Directory(createDirectoryIfMissing)
 
 
 main = do
@@ -26,6 +27,7 @@ compile inputPath outputPath = do
     specialized <- specializeModule parsed
     -- Annotate variables with types
     resolved <- runResolve specialized
+    createDirectoryIfMissing True outputPath
     let outputBase = outputPath <> "/" <> takeBaseName inputPath
     let cOut = outputBase <> ".c"
     Text.writeFile cOut (toText (prettyC resolved))
@@ -35,11 +37,11 @@ compile inputPath outputPath = do
     Text.writeFile qbeOut (toText (prettyMod qbe))
     putStrLn ("Wrote " ++ qbeOut)
     let asmOut = outputBase <> ".s"
-    qbeProcess <- readProcess "qbe" [qbeOut, "-o", asmOut] ""
+    qbeProcess <- readProcess "qbe" ["-o", asmOut, qbeOut] ""
     putStrLn qbeProcess
     putStrLn ("Wrote " ++ asmOut)
     let objOut = outputBase <> ".out"
-    ccProcess <- readProcess "cc" [asmOut, "-o", objOut] ""
+    ccProcess <- readProcess "cc" ["-o", objOut, asmOut] ""
     putStrLn ccProcess
     putStrLn ("Wrote " ++ objOut)
     putStrLn "Done"
