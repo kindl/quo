@@ -82,7 +82,9 @@ templateStringMid = do
 
 
 literal = fmap Int32 integer
+    <|> fmap UInt32 unsignedInteger
     <|> fmap Int64 long
+    <|> fmap UInt64 unsignedLong
     <|> fmap Float64 double
     <|> fmap StringLiteral string
     <|> bool
@@ -122,8 +124,16 @@ integer = do
     Int n <- next
     return n
 
+unsignedInteger = do
+    UInt n <- next
+    return n
+
 long = do
     Long n <- next
+    return n
+
+unsignedLong = do
+    ULong n <- next
     return n
 
 double = do
