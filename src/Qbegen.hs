@@ -497,10 +497,20 @@ statementToDef (Definition (Name name ty) (Literal l)) = do
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    let qbeParams =fmap (\(Name n t) -> (toQbeLoadTy t, n)) parameters
+    let qbeParams = fmap (\(Name n t) -> (toQbeLoadTy t, n)) parameters
+    let returnType = toQbeLoadTy ty
     blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
-    return [FuncDef (toQbeLoadTy ty) name qbeParams blocks]
+    let blocks' = addRetIfMissing returnType blocks
+    return [FuncDef returnType name qbeParams blocks']
 statementToDef _ = return []
+
+addRetIfMissing ty blocks =
+    if ty == voidTy && (null blocks || not (isRet (last blocks)))
+        then blocks ++ [Ret Nothing]
+        else blocks
+
+isRet (Ret _) = True
+isRet _ = False
 
 structToDef (StructDefinition ident [] fields) =
     [TypeDef ident (fmap (\(Name _ ty) -> toQbeStoreTy ty) fields)]
