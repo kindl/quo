@@ -98,7 +98,9 @@ fromName (Name n _) = fromText n
 
 literalToC :: Literal -> Doc a
 literalToC (Int32 l) = fromText (pack (show l))
+literalToC (UInt32 l) = fromText (pack (show l)) <> "U"
 literalToC (Int64 l) = fromText (pack (show l)) <> "L"
+literalToC (UInt64 l) = fromText (pack (show l)) <> "UL"
 literalToC (Float32 l) = fromText (pack (show l)) <> "f"
 literalToC (Float64 l) = fromText (pack (show l))
 literalToC (Bool True) = "true"
@@ -117,7 +119,9 @@ typeToC (PointerType t) = typeToC t <> "*"
 typeToC (Concrete "void" []) = "void"
 typeToC (Concrete "char" []) = "char"
 typeToC (Concrete "int" []) = "int"
+typeToC (Concrete "uint" []) = "unsigned int"
 typeToC (Concrete "long" []) = "long long int"
+typeToC (Concrete "ulong" []) = "unsigned long long int"
 typeToC (Concrete "float" []) = "float"
 typeToC (Concrete "double" []) = "double"
 typeToC (Concrete "usize" []) = "size_t"
