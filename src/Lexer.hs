@@ -9,15 +9,18 @@ import Data.Attoparsec.Combinator(manyTill', many', eitherP)
 import Data.Attoparsec.Text(takeWhile, takeWhile1, string, char, satisfy,
     anyChar, parseOnly, match, option)
 import qualified Data.Text as Text
-import Data.Text(Text)
-import Data.Int(Int64, Int32)
+import Data.Text(Text, isPrefixOf)
+import Data.Int(Int32, Int64)
+import Data.Word(Word32, Word64)
 import Data.Data(Data, Typeable)
 
 
 data Token =
     Identifier Text
     | Int Int32
+    | UInt Word32
     | Long Int64
+    | ULong Word64
     | Float Float
     | Double Double
     | Special Text
@@ -84,7 +87,7 @@ dotPart = do
     ds <- digits
     return (Text.cons d ds)
 
-specifier = char 'f' <|> char 'L'
+specifier = string "f" <|> string "L" <|> string "UL" <|> string "U"
 
 numberToken = do
     digs <- digitsWithOptionalSign
@@ -95,8 +98,10 @@ numberToken = do
 
     return (case spec of
         Nothing -> if dot == "" then Int (read combined) else Double (read combined)
-        Just 'f' -> Float (read combined)
-        Just 'L' -> Long (read combined)
+        Just "f" -> Float (read combined)
+        Just "L" -> Long (read combined)
+        Just "U" -> if isPrefixOf "-" digs then error "Unsigned literal with sign" else UInt (read combined)
+        Just "UL" -> if isPrefixOf "-" digs then error "Unsigned literal with sign" else ULong (read combined)
         _ -> error ("Unknown spec " ++ show spec))
 
 -- values
