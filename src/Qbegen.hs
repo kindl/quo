@@ -439,6 +439,7 @@ toQbeStoreTy ty = toQbeTy ty
 
 -- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
+toQbeTy (Concrete "void" []) = voidTy
 toQbeTy (Concrete "char" []) = "w"
 toQbeTy (Concrete "short" []) = "w"
 toQbeTy (Concrete "ushort" []) = "w"
