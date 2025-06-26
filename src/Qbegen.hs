@@ -176,8 +176,12 @@ getAlignmentAsText ty = pack (show (getAlignment ty))
 
 getAlignment :: Type -> Int32
 getAlignment (Concrete "char" []) = 1
+getAlignment (Concrete "short" []) = 2
+getAlignment (Concrete "ushort" []) = 2
 getAlignment (Concrete "int" []) = 4
+getAlignment (Concrete "uint" []) = 4
 getAlignment (Concrete "long" []) = 8
+getAlignment (Concrete "ulong" []) = 8
 getAlignment (Concrete "float" []) = 4
 getAlignment (Concrete "double" []) = 8
 getAlignment (Concrete "usize" []) = 8
@@ -190,8 +194,10 @@ getAlignment _ = 4
 findFields (Concrete structName []) = do
     structEnv <- asks getStructs
     find structName structEnv
+findFields (PointerType innerTy) =
+    findFields innerTy
 findFields ty =
-    fail ("Cannot get field of non struct type" ++ show ty)
+    fail ("Cannot get field of non-struct type " ++ show ty)
 
 getOffsetAsVal name fields = do
     offset <- getOffset name fields
@@ -214,8 +220,12 @@ pointerSize = 8
 -- When are structs that big?
 getSize :: StructLookup -> Type -> Int32
 getSize _ (Concrete "char" []) = 1
+getSize _ (Concrete "short" []) = 2
+getSize _ (Concrete "ushort" []) = 2
 getSize _ (Concrete "int" []) = 4
+getSize _ (Concrete "uint" []) = 4
 getSize _ (Concrete "long" []) = 8
+getSize _ (Concrete "ulong" []) = 8
 getSize _ (Concrete "float" []) = 4
 getSize _ (Concrete "double" []) = 8
 getSize _ (Concrete "usize" []) = 8
@@ -238,6 +248,7 @@ expressionToVal' e = do
 
 expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name name ty) []) = do
+    let loadType = toQbeLoadTy ty
     let qbeTy = toQbeTy ty
     wasParam <- isParam name
     let wasStruct = isStructQbeTy qbeTy
@@ -249,7 +260,7 @@ expressionToVal (Variable (Name name ty) []) = do
             let sigil = if wasGlobal then "$" else "%"
             -- Local variables are either an address to the stack or global
             -- so a load instruction is necessary
-            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) [sigil <> name])
+            emit (Instruction freshIdent qbeTy ("load" <> loadType) [sigil <> name])
             return (qbeTy, "%" <> freshIdent)
 expressionToVal (Literal l) = do
     val <- literalToVal l
@@ -259,7 +270,7 @@ expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expr
 expressionToVal (Apply (Variable (Name "cast" _) [typeParameter]) [parameter]) = do
     case typeParameter of
         PointerType _ -> expressionToVal parameter
-        _ -> fail ("Conversion to " ++ show typeParameter ++ " not implemented yet")
+        _ -> fail ("Conversion from " ++ show (readType parameter) ++ " to " ++ show typeParameter ++ " not implemented yet")
 expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [typeParameter]) _) = do
     size <- getSizeAsVal typeParameter
     let qbeTy = toQbeTy returnType
@@ -270,9 +281,12 @@ expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) exp
     let qbeTy = toQbeTy returnType
     if isOperator name
         then emitOperator freshIdent qbeTy name vals
+        -- TODO local functions
         else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
     return (qbeTy, "%" <> freshIdent)
--- TODO Investigate: Does qbe allow calling local functions?
+-- TODO Should the following case be allowed? For example for currying?
+-- Probably not very interesting without closuses, but possible
+-- getCompare(compareOption)(a, b)
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
@@ -291,9 +305,10 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetted pointerTy "add" [val, offset])
     let qbeTy = toQbeTy fieldType
+    let loadTy = toQbeLoadTy fieldType
     if isStructQbeTy qbeTy
         then return (qbeTy, "%" <> offsetted)
-        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
+        else emit (Instruction freshIdent qbeTy ("load" <> loadTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -303,7 +318,7 @@ emitOperator ident qbeTy "!" [(_, val)] =
 emitOperator ident qbeTy op [(qbeTy1, val1), (qbeTy2, val2)] =
     if qbeTy1 == qbeTy2
         then emitOperator' ident qbeTy op qbeTy1 val1 val2
-        else fail ("Emit operator: Wrong type " ++ show qbeTy1 ++ " " ++ show qbeTy2)
+        else fail ("Emit operator: Wrong type for operator " ++ show op ++ " " ++ show qbeTy1 ++ " " ++ show qbeTy2)
 emitOperator _ _ _ _ =
     fail "Emit operator: Wrong args"
 
@@ -376,8 +391,9 @@ emitCopyField fields left right (fieldName, fieldType) = do
     leftOffsetted <- createOffset fields fieldName left
     rightOffsetted <- createOffset fields fieldName right
     let qbeTy = toQbeTy fieldType
+    let loadTy = toQbeLoadTy fieldType
     loaded <- newIdent ".local"
-    emit (Instruction loaded qbeTy ("load" <> qbeTy) ["%" <> rightOffsetted])
+    emit (Instruction loaded qbeTy ("load" <> loadTy) ["%" <> rightOffsetted])
     emit (Store qbeTy ("%" <> loaded) ("%" <> leftOffsetted))
 
 literalToVal :: Literal -> ReaderT Builder IO Val
@@ -386,7 +402,9 @@ literalToVal l = return (literalToText l)
 
 literalToText :: Literal -> Text
 literalToText (Int32 l) = pack (show l)
+literalToText (UInt32 l) = pack (show l)
 literalToText (Int64 l) = pack (show l)
+literalToText (UInt64 l) = pack (show l)
 literalToText (Float32 l) = "s_" <> pack (show l)
 literalToText (Float64 l) = "d_" <> pack (show l)
 literalToText (Bool True) = "true"
@@ -400,17 +418,42 @@ pointerTy = "l"
 voidTy :: Ty
 voidTy = ""
 
+-- TODO a byte load is extended to w like the following:
+-- %.6 =w loadsb %.5
+
+-- Handles signedness, used for function signatures and loads
+toQbeLoadTy :: Type -> Ty
+toQbeLoadTy (Concrete "ushort" []) = "uh"
+toQbeLoadTy (Concrete "uint" []) = "uw"
+-- void type is just left empty for functions
+toQbeLoadTy (Concrete "void" []) = voidTy
+toQbeLoadTy ty = toQbeStoreTy ty
+
+-- Handles sub-word types, used for data types and stores
+-- sign does not matter
+toQbeStoreTy :: Type -> Ty
+toQbeStoreTy (Concrete "char" []) = "b"
+toQbeStoreTy (Concrete "short" []) = "h"
+toQbeStoreTy (Concrete "ushort" []) = "h"
+toQbeStoreTy ty = toQbeTy ty
+
+-- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
-toQbeTy (Concrete "void" []) = voidTy
-toQbeTy (Concrete "char" []) = "b"
+toQbeTy (Concrete "char" []) = "w"
+toQbeTy (Concrete "short" []) = "w"
+toQbeTy (Concrete "ushort" []) = "w"
 toQbeTy (Concrete "bool" []) = "w"
 toQbeTy (Concrete "int" []) = "w"
+toQbeTy (Concrete "uint" []) = "w"
 toQbeTy (Concrete "long" []) = "l"
--- TODO unsiged type uw is not used for types, only for operators
+toQbeTy (Concrete "ulong" []) = "l"
 toQbeTy (Concrete "usize" []) = "l"
+toQbeTy (Concrete "float" []) = "s"
+toQbeTy (Concrete "double" []) = "d"
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
+toQbeTy (FunctionType _ _) = pointerTy
 toQbeTy (Concrete "auto" []) = error "Error: auto appeared in printing stage"
 toQbeTy (Concrete s []) = ":" <> s
 toQbeTy other =
@@ -447,17 +490,17 @@ moduleToQbe (Module name statements) = do
 statementToDef :: Statement -> ReaderT Builder IO [Def]
 statementToDef (Definition (Name name ty) (Literal l)) = do
     val <- literalToVal l
-    return [DataDef name [(toQbeTy ty, val)]]
+    return [DataDef name [(toQbeStoreTy ty, val)]]
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    let qbeParams =fmap (\(Name n t) -> (toQbeTy t, n)) parameters
+    let qbeParams =fmap (\(Name n t) -> (toQbeLoadTy t, n)) parameters
     blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
-    return [FuncDef (toQbeTy ty) name qbeParams blocks]
+    return [FuncDef (toQbeLoadTy ty) name qbeParams blocks]
 statementToDef _ = return []
 
 structToDef (StructDefinition ident [] fields) =
-    [TypeDef ident (fmap (\(Name _ ty) -> toQbeTy ty) fields)]
+    [TypeDef ident (fmap (\(Name _ ty) -> toQbeStoreTy ty) fields)]
 structToDef _ = []
 
 gatherGlobalNames :: [Statement] -> [Text]
