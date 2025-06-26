@@ -247,6 +247,8 @@ expressionToVal' e = do
     return v
 
 expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
+expressionToVal (Variable (Name "nullptr" _) []) =
+    return (pointerTy, "0")
 expressionToVal (Variable (Name name ty) []) = do
     let loadType = toQbeLoadTy ty
     let qbeTy = toQbeTy ty
