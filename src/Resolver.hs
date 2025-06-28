@@ -252,8 +252,8 @@ resolveExpression (Apply expression parameters) expectedType = do
     case readType resolvedFunction of
         FunctionType returnType parameterTypes -> do
             resolvedParameters <- zipParameters resolveExpression parameters parameterTypes
-            if returnType == auto
-                then return (resolveOperator resolvedFunction resolvedParameters)
+            if returnType == auto || elem auto parameterTypes
+                then return (resolveOperator returnType resolvedFunction resolvedParameters)
                 else if subsumes returnType expectedType
                     then return (Apply resolvedFunction resolvedParameters)
                     else fail ("Return type " ++ show returnType ++ " did not match " ++ show expectedType)
@@ -274,17 +274,18 @@ resolveExpression e@(Literal l) expectedType =
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
 
--- TODO handle conversions
-resolveOperator :: Expression -> [Expression] -> Expression
-resolveOperator (Variable (Name name _) []) [resolved] =
+-- TODO handle conversions, for example 1 == 1.0
+resolveOperator returnType (Variable (Name name _) []) [resolved] =
     let
-        ty = readType resolved
-    in Apply (Variable (Name name (FunctionType ty [ty])) []) [resolved]
-resolveOperator (Variable (Name name _) []) [resolved1, resolved2] =
+        parameterType = readType resolved
+        resolvedReturnType = if returnType == auto then parameterType else returnType
+    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType])) []) [resolved]
+resolveOperator returnType (Variable (Name name _) []) [resolved1, resolved2] =
     let
-        ty = readType resolved1
-    in Apply (Variable (Name name (FunctionType ty [ty, ty])) []) [resolved1, resolved2]
-resolveOperator other _ =
+        parameterType = readType resolved1
+        resolvedReturnType = if returnType == auto then parameterType else returnType
+    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType])) []) [resolved1, resolved2]
+resolveOperator _ other _ =
     error ("Cannot resolve operator " ++ show other)
 
 substitute :: Data a1 => [(Text, Type)] -> a1 -> a1
