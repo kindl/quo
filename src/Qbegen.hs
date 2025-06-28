@@ -130,20 +130,9 @@ statementToBlock (Definition (Name name ty) expression) = do
     emitAlloc name ty
     val <- expressionToVal expression
     emit (Store (toQbeStoreTy ty) val ("%" <> name))
--- TODO if with several branches
-statementToBlock (If [(condition, statements)] maybeElseBranch) = do
-    thenLabel <- newLabel "then"
-    elseLabel <- newLabel "else"
+statementToBlock (If branches maybeElseBranch) = do
     endLabel <- newLabel "end"
-
-    val <- expressionToVal condition
-    emit (JumpNonZero val thenLabel elseLabel)
-    emit (Label thenLabel)
-    toBlock statements
-    emit (Jump endLabel)
-    emit (Label elseLabel)
-    toBlock (concat maybeElseBranch)
-    emit (Label endLabel)
+    emitBranches endLabel branches maybeElseBranch
 {-
 @continue
     %cond = cond
@@ -169,6 +158,23 @@ statementToBlock (While condition statements) = do
     emit (Jump continueLabel)
     emit (Label breakLabel)
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
+
+emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> ReaderT Builder IO ()
+emitBranches endLabel [] maybeElseBranch = do
+    toBlock (concat maybeElseBranch)
+    emit (Label endLabel)
+emitBranches endLabel ((condition, statements):rest) maybeElseBranch = do
+    thenLabel <- newLabel "then"
+    elseLabel <- newLabel "else"
+
+    val <- expressionToVal condition
+    emit (JumpNonZero val thenLabel elseLabel)
+    emit (Label thenLabel)
+    toBlock statements
+    emit (Jump endLabel)
+
+    emit (Label elseLabel)
+    emitBranches endLabel rest maybeElseBranch
 
 getSizeAsVal :: Type -> Emit Text
 getSizeAsVal ty = do
