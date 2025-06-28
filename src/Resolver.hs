@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Resolver(StructLookup, runResolve, literalType, readType,
+module Resolver(StructLookup, TypeLookup, runResolve, literalType, readType,
     substitute, zipParameters, zipTypeParameters, gatherStructs) where
 
 import Types
@@ -11,10 +11,12 @@ import qualified Data.Text as Text
 import Platte(transformBi)
 import Data.Maybe(fromMaybe)
 import Helpers(find)
+import Data.Data(Data)
+
 
 type TypeLookup = [(Text, Type)]
 
-type StructLookup = [(Text, [(Text, Type)])]
+type StructLookup = [(Text, TypeLookup)]
 
 data Env = Env TypeLookup StructLookup
 
@@ -285,6 +287,7 @@ resolveOperator (Variable (Name name _) []) [resolved1, resolved2] =
 resolveOperator other _ =
     error ("Cannot resolve operator " ++ show other)
 
+substitute :: Data a1 => [(Text, Type)] -> a1 -> a1
 substitute substitution m =
     let
         f t@(Concrete v []) =
@@ -292,6 +295,7 @@ substitute substitution m =
         f t = t
     in transformBi f m
 
+zipParameters :: MonadFail m => (a -> b -> m c) -> [a] -> [b] -> m [c]
 zipParameters f xs ys =
     let
         leftLength = length xs
@@ -300,6 +304,7 @@ zipParameters f xs ys =
         then zipWithM f xs ys
         else fail ("Expected " ++ show leftLength ++ " parameters, but received " ++ show rightLength)
 
+zipTypeParameters :: [a] -> [b] -> [(a, b)]
 zipTypeParameters xs ys =
     let
         leftLength = length xs
@@ -316,6 +321,7 @@ subsumes (ArrayType elementType _) (PointerType pointerType) =
     subsumes elementType pointerType
 subsumes a b = a == b
 
+findFields :: Type -> ReaderT Env IO TypeLookup
 findFields (Concrete structName []) = do
     structEnv <- getStructEnv
     find structName structEnv

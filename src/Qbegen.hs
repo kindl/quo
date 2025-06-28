@@ -3,7 +3,7 @@ module Qbegen(moduleToQbe, prettyMod) where
 
 import Data.Text(Text, pack, isPrefixOf)
 import Types
-import Resolver(StructLookup, readType, gatherStructs, zipParameters)
+import Resolver(StructLookup, TypeLookup, readType, gatherStructs, zipParameters)
 import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
 import Control.Monad(when)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
@@ -49,31 +49,34 @@ data Builder = Builder {
     getInstructions :: IORef [Block]
 }
 
-newUnique :: ReaderT Builder IO Int
+type Emit a = ReaderT Builder IO a
+
+newUnique :: Emit Int
 newUnique = do
     ref <- asks getNameSupply
     lift (modifyIORef' ref succ >> readIORef ref)
 
-newIdent :: Text -> ReaderT Builder IO Text
+newIdent :: Text -> Emit Text
 newIdent prefix = fmap (\i -> prefix <> pack (show i)) newUnique
 
-emit :: Block -> ReaderT Builder IO ()
+emit :: Block -> Emit ()
 emit instruction = do
     ref <- asks getInstructions
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
+emitAlloc :: Text -> Type -> Emit ()
 emitAlloc name ty = do
     ref <- asks getAllocs
     size <- getSizeAsVal ty
     let instruction = Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [size]
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
-withParameters :: [Text] -> ReaderT Builder m a -> ReaderT Builder m a
+withParameters :: [Text] -> Emit a -> Emit a
 withParameters params action =
     local (\(Builder globals _ uniques stringDefs structs instructions allocs) ->
         Builder globals params uniques stringDefs structs instructions allocs) action
 
-withFreshBuilder :: ReaderT Builder IO () -> ReaderT Builder IO [Block]
+withFreshBuilder :: Emit () -> Emit [Block]
 withFreshBuilder action = do
     allocs <- lift (newIORef [])
     instructions <- lift (newIORef [])
@@ -82,24 +85,24 @@ withFreshBuilder action = do
     i <- lift (readIORef instructions)
     return (a ++ i)
 
-isGlobal :: Text -> ReaderT Builder IO Bool
+isGlobal :: Text -> Emit Bool
 isGlobal name = do
     globalNames <- asks getGlobals
     return (elem name globalNames)
 
-isParam :: Text -> ReaderT Builder IO Bool
+isParam :: Text -> Emit Bool
 isParam name = do
     params <- asks getParameters
     return (elem name params)
 
-toBlock :: [Statement] -> ReaderT Builder IO ()
+toBlock :: [Statement] -> Emit ()
 toBlock = traverse_ statementToBlock
 
-bodyToBlock :: [Text] -> [Statement] -> ReaderT Builder IO ()
+bodyToBlock :: [Text] -> [Statement] -> Emit ()
 bodyToBlock parameters statements =
     withParameters parameters (toBlock statements)
 
-statementToBlock :: Statement -> ReaderT Builder IO ()
+statementToBlock :: Statement -> Emit ()
 statementToBlock (Return Nothing) =
     emit (Ret Nothing)
 statementToBlock (Return (Just val)) = do
@@ -127,6 +130,7 @@ statementToBlock (Definition (Name name ty) expression) = do
     emitAlloc name ty
     val <- expressionToVal expression
     emit (Store (toQbeStoreTy ty) val ("%" <> name))
+-- TODO if with several branches
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
     thenLabel <- newLabel "then"
     elseLabel <- newLabel "else"
@@ -166,6 +170,7 @@ statementToBlock (While condition statements) = do
     emit (Label breakLabel)
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
+getSizeAsVal :: Type -> Emit Text
 getSizeAsVal ty = do
     structEnv <- asks getStructs
     let size = getSize structEnv ty
@@ -191,6 +196,7 @@ getAlignment (PointerType _) = 8
 getAlignment _ = 4
 --getAlignment other = error ("Cannot get alignment of " ++ show other)
 
+findFields :: Type -> Emit TypeLookup
 findFields (Concrete structName []) = do
     structEnv <- asks getStructs
     find structName structEnv
@@ -199,10 +205,12 @@ findFields (PointerType innerTy) =
 findFields ty =
     fail ("Cannot get field of non-struct type " ++ show ty)
 
+getOffsetAsVal :: Text -> TypeLookup -> Emit Text
 getOffsetAsVal name fields = do
     offset <- getOffset name fields
     return (pack (show offset))
 
+getOffset :: Text -> TypeLookup -> Emit Int32
 getOffset name [] = fail ("Did not encounter field " ++ show name)
 getOffset name ((fieldName, ty):fields) =
     if name == fieldName
@@ -241,7 +249,7 @@ getSize structEnv ty@(Concrete structName []) =
             in sum sizes
 getSize _ other = error ("Cannot determine size of type " ++ show other)
 
-expressionToVal :: Expression -> ReaderT Builder IO Val
+expressionToVal :: Expression -> Emit Val
 expressionToVal (Variable (Name "nullptr" _) []) =
     return "0"
 expressionToVal (Variable (Name name ty) []) = do
@@ -308,7 +316,7 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
         then return ("%" <> offsetted)
         else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return ("%" <> freshIdent)
 
-emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
+emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
     emit (Instruction ident qbeTy "neg" [val])
 emitOperator ident qbeTy "!" [(_, val)] =
@@ -320,7 +328,7 @@ emitOperator ident qbeTy op [(qbeTy1, val1), (qbeTy2, val2)] =
 emitOperator _ _ _ _ =
     fail "Emit operator: Wrong args"
 
-emitOperator' :: Ident -> Ty -> Text -> Ident -> Val -> Val -> ReaderT Builder IO ()
+emitOperator' :: Ident -> Ty -> Text -> Ident -> Val -> Val -> Emit ()
 emitOperator' ident qbeTy "+" _ val1 val2 =
     emit (Instruction ident qbeTy "add" [val1, val2])
 emitOperator' ident qbeTy "-" _ val1 val2 =
@@ -343,6 +351,7 @@ emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
+emitStruct :: Type -> [Expression] -> Emit Text
 emitStruct structType expressions = do
     ident <- newIdent ".local"
     emitAlloc ident structType
@@ -356,6 +365,7 @@ emitStruct structType expressions = do
 -- and build it with Matrix(Vector(1, 2), Vector(3, 4))
 -- then we don't want to allocate the Vectors, we just want to allocate Matrix
 -- and assign the individual ints.
+emitField :: TypeLookup -> Text -> (Text, Type) -> Expression -> Emit ()
 emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
     offsetted <- createOffset fields fieldName ("%" <> ident)
     nestedFields <- findFields fieldType
@@ -376,14 +386,17 @@ emitField fields ident (fieldName, fieldType) expression = do
     val <- expressionToVal expression
     emit (Store (toQbeStoreTy fieldType) val ("%" <> offsetted))
 
+isStructQbeTy :: Text -> Bool
 isStructQbeTy = isPrefixOf ":"
 
+createOffset :: TypeLookup -> Text -> Val -> Emit Text
 createOffset fields fieldName val = do
     offsetted <- newIdent ".local"
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetted pointerTy "add" [val, offset])
     return offsetted
 
+emitCopyField :: TypeLookup -> Val -> Val -> (Text, Type) -> Emit ()
 emitCopyField fields left right (fieldName, fieldType) = do
     leftOffsetted <- createOffset fields fieldName left
     rightOffsetted <- createOffset fields fieldName right
@@ -394,6 +407,7 @@ emitCopyField fields left right (fieldName, fieldType) = do
     emit (Store storeTy ("%" <> loaded) ("%" <> leftOffsetted))
 
 -- TODO remove overlap by finding general rules
+emitCast :: Type -> Type -> Text -> Emit Text
 emitCast parameterType targetType val | parameterType == targetType = return val
 emitCast (PointerType _) (PointerType _) val = return val
 emitCast (Concrete "int" []) (Concrete "uint" []) val = return val
@@ -463,11 +477,14 @@ emitCast parameterType targetType _ =
     fail ("Conversion from " ++ show parameterType ++ " to "
         ++ show targetType ++ " not implemented yet")
 
+isFloatingType :: Type -> Bool
 isFloatingType ty = doubleType == ty || floatType == ty
+
+isIntegerType :: Type -> Bool
 isIntegerType ty = charType == ty || shortType == ty || ushortType == ty
     || intType == ty || uintType == ty || longType == ty || ulongType == ty
 
-literalToVal :: Literal -> ReaderT Builder IO Val
+literalToVal :: Literal -> Emit Val
 literalToVal (StringLiteral str) = registerConstant str
 literalToVal l = return (literalToText l)
 
@@ -531,17 +548,16 @@ toQbeTy (Concrete s []) = ":" <> s
 toQbeTy other =
     error ("Error: generic or function type " ++ show other ++ " appeared in printing stage")
 
-newLabel :: Text -> ReaderT Builder IO Text
+newLabel :: Text -> Emit Text
 newLabel = newIdent
 
-registerConstant :: Text -> ReaderT Builder IO Text
+registerConstant :: Text -> Emit Text
 registerConstant str = do
     freshName <- newIdent "string"
     ref <- asks getStringLiterals
     let escaped = "\"" <> escape str <> "\\000\""
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
     return ("$" <> freshName)
-
 
 -- Pretty Printing to Qbe format
 moduleToQbe :: Module -> IO Mod
@@ -559,7 +575,7 @@ moduleToQbe (Module name statements) = do
     return (Mod name (typeDefs ++ createdStringDefs ++ concat defs))
 
 -- Top level
-statementToDef :: Statement -> ReaderT Builder IO [Def]
+statementToDef :: Statement -> Emit [Def]
 statementToDef (Definition (Name name ty) (Literal l)) = do
     val <- literalToVal l
     return [DataDef name [(toQbeStoreTy ty, val)]]
@@ -573,14 +589,17 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     return [FuncDef returnType name qbeParams blocks']
 statementToDef _ = return []
 
+addRetIfMissing :: Ty -> [Block] -> [Block]
 addRetIfMissing ty blocks =
     if ty == voidTy && (null blocks || not (isRet (last blocks)))
         then blocks ++ [Ret Nothing]
         else blocks
 
+isRet :: Block -> Bool
 isRet (Ret _) = True
 isRet _ = False
 
+structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
     [TypeDef ident (fmap (\(Name _ ty) -> toQbeStoreTy ty) fields)]
 structToDef _ = []
