@@ -3,7 +3,7 @@ module Qbegen(moduleToQbe, prettyMod) where
 
 import Data.Text(Text, pack, isPrefixOf)
 import Types
-import Resolver(StructLookup, readType, literalType, gatherStructs, zipParameters)
+import Resolver(StructLookup, readType, gatherStructs, zipParameters)
 import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
 import Control.Monad(when)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
@@ -103,17 +103,17 @@ statementToBlock :: Statement -> ReaderT Builder IO ()
 statementToBlock (Return Nothing) =
     emit (Ret Nothing)
 statementToBlock (Return (Just val)) = do
-    returnVal <- expressionToVal' val
+    returnVal <- expressionToVal val
     emit (Ret (Just returnVal))
 statementToBlock (Call expression) =
-    expressionToVal' expression >> return ()
+    expressionToVal expression >> return ()
 statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     -- TODO handling complex leftHand expressions
     wasParam <- isParam name
     when wasParam (fail ("Parameter " ++ show name ++ " is constant and cannot be reassigned"))
     wasGlobal <- isGlobal name
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
-    val <- expressionToVal' rightHand
+    val <- expressionToVal rightHand
     emit (Store (toQbeStoreTy ty) val ("%" <> name))
 statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
     emitAlloc ident structType
@@ -125,14 +125,14 @@ statementToBlock (Definition (Name name ty) expression) = do
     -- This is necessary so that we do not keep reallocating,
     -- for example in a while-loop
     emitAlloc name ty
-    val <- expressionToVal' expression
+    val <- expressionToVal expression
     emit (Store (toQbeStoreTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
     thenLabel <- newLabel "then"
     elseLabel <- newLabel "else"
     endLabel <- newLabel "end"
 
-    val <- expressionToVal' condition
+    val <- expressionToVal condition
     emit (JumpNonZero val thenLabel elseLabel)
     emit (Label thenLabel)
     toBlock statements
@@ -158,7 +158,7 @@ statementToBlock (While condition statements) = do
     -- CONSIDER passing the continue and break label
     -- for implementing break and continue statements
     emit (Label continueLabel)
-    val <- expressionToVal' condition
+    val <- expressionToVal condition
     emit (JumpNonZero val loopLabel breakLabel)
     emit (Label loopLabel)
     toBlock statements
@@ -241,20 +241,15 @@ getSize structEnv ty@(Concrete structName []) =
             in sum sizes
 getSize _ other = error ("Cannot determine size of type " ++ show other)
 
-expressionToVal' :: Expression -> ReaderT Builder IO Ident
-expressionToVal' e = do
-    (_, v) <- expressionToVal e
-    return v
-
-expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
+expressionToVal :: Expression -> ReaderT Builder IO Val
 expressionToVal (Variable (Name "nullptr" _) []) =
-    return (pointerTy, "0")
+    return "0"
 expressionToVal (Variable (Name name ty) []) = do
     let qbeTy = toQbeTy ty
     wasParam <- isParam name
     let wasStruct = isStructQbeTy qbeTy
     if wasParam || wasStruct
-        then return (qbeTy, "%" <> name)
+        then return ("%" <> name)
         else do
             freshIdent <- newIdent ".local"
             wasGlobal <- isGlobal name
@@ -262,53 +257,56 @@ expressionToVal (Variable (Name name ty) []) = do
             -- Local variables are either an address to the stack or global
             -- so a load instruction is necessary
             emit (Instruction freshIdent (toQbeWordTy ty) ("load" <> qbeTy) [sigil <> name])
-            return (qbeTy, "%" <> freshIdent)
-expressionToVal (Literal l) = do
-    val <- literalToVal l
-    return (toQbeTy (literalType l), val)
+            return ("%" <> freshIdent)
+expressionToVal (Literal l) =
+    literalToVal l
 expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
     emitStruct returnType expressions
 expressionToVal (Apply (Variable (Name "cast" _) [targetType]) [parameter]) = do
     let parameterType = readType parameter
-    val <- expressionToVal' parameter
+    val <- expressionToVal parameter
     emitCast parameterType targetType val
-expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [typeParameter]) _) = do
-    size <- getSizeAsVal typeParameter
-    let qbeTy = toQbeTy returnType
-    return (qbeTy, size)
-expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
+expressionToVal (Apply (Variable (Name "sizeof" (FunctionType _ _)) [typeParameter]) _) =
+    getSizeAsVal typeParameter
+expressionToVal (Apply (Variable (Name name (FunctionType returnType parameterTypes)) []) expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
-    let ty = toQbeWordTy returnType
+    let retTy = toQbeWordTy returnType
+    let parameterTys = fmap toQbeTy parameterTypes
+    let zipped = zip parameterTys vals
     if isOperator name
-        then emitOperator freshIdent ty name vals
+        then emitOperator freshIdent retTy name zipped
         -- TODO local functions
-        else emit (CallInstruction freshIdent ty ("$" <> name) vals)
-    return (ty, "%" <> freshIdent)
+        else emit (CallInstruction freshIdent retTy ("$" <> name) zipped)
+    return ("%" <> freshIdent)
 -- TODO Should the following case be allowed? For example for currying?
 -- Probably not very interesting without closuses, but possible
 -- getCompare(compareOption)(a, b)
 expressionToVal (Apply expression expressions) = do
     freshIdent <- newIdent ".local"
+    val <- expressionToVal expression
     vals <- traverse expressionToVal expressions
-    (qbeTy, val) <- expressionToVal expression
     when (not (isPrefixOf "$" val)) (fail ("Is not a global function " ++ show val))
-    emit (CallInstruction freshIdent qbeTy val vals)
-    return (qbeTy, "%" <> freshIdent)
+    let (FunctionType returnType parameterTypes) = readType expression
+    let retTy = toQbeWordTy returnType
+    let parameterTys = fmap toQbeTy parameterTypes
+    let zipped = zip parameterTys vals
+    emit (CallInstruction freshIdent retTy val zipped)
+    return ("%" <> freshIdent)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     -- This will hold the offsetted pointer
     offsetted <- newIdent ".local"
     -- This will hold the read memory
     freshIdent <- newIdent ".local"
-    val <- expressionToVal' expression
+    val <- expressionToVal expression
     let structType = readType expression
     fields <- findFields structType
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetted pointerTy "add" [val, offset])
     let qbeTy = toQbeTy fieldType
     if isStructQbeTy qbeTy
-        then return (qbeTy, "%" <> offsetted)
-        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
+        then return ("%" <> offsetted)
+        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return ("%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -350,8 +348,7 @@ emitStruct structType expressions = do
     emitAlloc ident structType
     fields <- findFields structType
     zipParameters (emitField fields ident) fields expressions
-    let qbeTy = toQbeTy structType
-    return (qbeTy, "%" <> ident)
+    return ("%" <> ident)
 
 -- Nested struct creation:
 -- When we have a struct Vector { int x, int y }
@@ -371,12 +368,12 @@ emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressi
 emitField fields ident (fieldName, fieldType) expression | isStructQbeTy (toQbeTy fieldType) = do
     offsetted <- createOffset fields fieldName ("%" <> ident)
     nestedFields <- findFields fieldType
-    val <- expressionToVal' expression
+    val <- expressionToVal expression
     traverse_ (emitCopyField nestedFields ("%" <> offsetted) val) nestedFields
 -- For base types
 emitField fields ident (fieldName, fieldType) expression = do
     offsetted <- createOffset fields fieldName ("%" <> ident)
-    val <- expressionToVal' expression
+    val <- expressionToVal expression
     emit (Store (toQbeStoreTy fieldType) val ("%" <> offsetted))
 
 isStructQbeTy = isPrefixOf ":"
@@ -397,25 +394,25 @@ emitCopyField fields left right (fieldName, fieldType) = do
     emit (Store storeTy ("%" <> loaded) ("%" <> leftOffsetted))
 
 -- TODO remove overlap by finding general rules
-emitCast parameterType targetType val | parameterType == targetType = return (toQbeTy targetType, val)
-emitCast (PointerType _) (PointerType _) val = return (pointerTy, val)
-emitCast (Concrete "int" []) (Concrete "uint" []) val = return ("w", val)
-emitCast (Concrete "uint" []) (Concrete "int" []) val = return ("w", val)
-emitCast (Concrete "int" []) (Concrete "ushort" []) val = return ("uh", val)
-emitCast (Concrete "int" []) (Concrete "short" []) val = return ("sh", val)
-emitCast (Concrete "int" []) (Concrete "char" []) val = return ("ub", val)
+emitCast parameterType targetType val | parameterType == targetType = return val
+emitCast (PointerType _) (PointerType _) val = return val
+emitCast (Concrete "int" []) (Concrete "uint" []) val = return val
+emitCast (Concrete "uint" []) (Concrete "int" []) val = return val
+emitCast (Concrete "int" []) (Concrete "ushort" []) val = return val
+emitCast (Concrete "int" []) (Concrete "short" []) val = return val
+emitCast (Concrete "int" []) (Concrete "char" []) val = return val
 emitCast (Concrete "char" []) (Concrete "int" []) val = do
     freshIdent <- newIdent ".local"
     emit (Instruction freshIdent "w" "extub" [val])
-    return ("w", "%" <> freshIdent)
+    return ("%" <> freshIdent)
 emitCast (Concrete "ushort" []) (Concrete "int" []) val = do
     freshIdent <- newIdent ".local"
     emit (Instruction freshIdent "w" "extuh" [val])
-    return ("w", "%" <> freshIdent)
+    return ("%" <> freshIdent)
 emitCast (Concrete "short" []) (Concrete "int" []) val = do
     freshIdent <- newIdent ".local"
     emit (Instruction freshIdent "w" "extsh" [val])
-    return ("w", "%" <> freshIdent)
+    return ("%" <> freshIdent)
 emitCast parameterType targetType _ =
     fail ("Conversion from " ++ show parameterType ++ " to "
         ++ show targetType ++ " not implemented yet")
