@@ -106,7 +106,7 @@ statementToBlock (Return (Just val)) = do
     returnVal <- expressionToVal' val
     emit (Ret (Just returnVal))
 statementToBlock (Call expression) =
-    expressionToVal expression >> return ()
+    expressionToVal' expression >> return ()
 statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     -- TODO handling complex leftHand expressions
     wasParam <- isParam name
@@ -114,7 +114,7 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     wasGlobal <- isGlobal name
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal' rightHand
-    emit (Store (toQbeTy ty) val ("%" <> name))
+    emit (Store (toQbeStoreTy ty) val ("%" <> name))
 statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
     emitAlloc ident structType
     fields <- findFields structType
@@ -126,7 +126,7 @@ statementToBlock (Definition (Name name ty) expression) = do
     -- for example in a while-loop
     emitAlloc name ty
     val <- expressionToVal' expression
-    emit (Store (toQbeTy ty) val ("%" <> name))
+    emit (Store (toQbeStoreTy ty) val ("%" <> name))
 statementToBlock (If [(condition, statements)] maybeElseBranch) = do
     thenLabel <- newLabel "then"
     elseLabel <- newLabel "else"
@@ -250,7 +250,6 @@ expressionToVal :: Expression -> ReaderT Builder IO (Ty, Val)
 expressionToVal (Variable (Name "nullptr" _) []) =
     return (pointerTy, "0")
 expressionToVal (Variable (Name name ty) []) = do
-    let loadType = toQbeLoadTy ty
     let qbeTy = toQbeTy ty
     wasParam <- isParam name
     let wasStruct = isStructQbeTy qbeTy
@@ -262,17 +261,17 @@ expressionToVal (Variable (Name name ty) []) = do
             let sigil = if wasGlobal then "$" else "%"
             -- Local variables are either an address to the stack or global
             -- so a load instruction is necessary
-            emit (Instruction freshIdent qbeTy ("load" <> loadType) [sigil <> name])
+            emit (Instruction freshIdent (toQbeWordTy ty) ("load" <> qbeTy) [sigil <> name])
             return (qbeTy, "%" <> freshIdent)
 expressionToVal (Literal l) = do
     val <- literalToVal l
     return (toQbeTy (literalType l), val)
 expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
     emitStruct returnType expressions
-expressionToVal (Apply (Variable (Name "cast" _) [typeParameter]) [parameter]) = do
-    case typeParameter of
-        PointerType _ -> expressionToVal parameter
-        _ -> fail ("Conversion from " ++ show (readType parameter) ++ " to " ++ show typeParameter ++ " not implemented yet")
+expressionToVal (Apply (Variable (Name "cast" _) [targetType]) [parameter]) = do
+    let parameterType = readType parameter
+    val <- expressionToVal' parameter
+    emitCast parameterType targetType val
 expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [typeParameter]) _) = do
     size <- getSizeAsVal typeParameter
     let qbeTy = toQbeTy returnType
@@ -280,12 +279,12 @@ expressionToVal (Apply (Variable (Name "sizeof" (FunctionType returnType _)) [ty
 expressionToVal (Apply (Variable (Name name (FunctionType returnType _)) []) expressions) = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
-    let qbeTy = toQbeTy returnType
+    let ty = toQbeWordTy returnType
     if isOperator name
-        then emitOperator freshIdent qbeTy name vals
+        then emitOperator freshIdent ty name vals
         -- TODO local functions
-        else emit (CallInstruction freshIdent qbeTy ("$" <> name) vals)
-    return (qbeTy, "%" <> freshIdent)
+        else emit (CallInstruction freshIdent ty ("$" <> name) vals)
+    return (ty, "%" <> freshIdent)
 -- TODO Should the following case be allowed? For example for currying?
 -- Probably not very interesting without closuses, but possible
 -- getCompare(compareOption)(a, b)
@@ -307,10 +306,9 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetted pointerTy "add" [val, offset])
     let qbeTy = toQbeTy fieldType
-    let loadTy = toQbeLoadTy fieldType
     if isStructQbeTy qbeTy
         then return (qbeTy, "%" <> offsetted)
-        else emit (Instruction freshIdent qbeTy ("load" <> loadTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
+        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return (qbeTy, "%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> ReaderT Builder IO ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -373,13 +371,13 @@ emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressi
 emitField fields ident (fieldName, fieldType) expression | isStructQbeTy (toQbeTy fieldType) = do
     offsetted <- createOffset fields fieldName ("%" <> ident)
     nestedFields <- findFields fieldType
-    (qbeTy, val) <- expressionToVal expression
+    val <- expressionToVal' expression
     traverse_ (emitCopyField nestedFields ("%" <> offsetted) val) nestedFields
 -- For base types
 emitField fields ident (fieldName, fieldType) expression = do
     offsetted <- createOffset fields fieldName ("%" <> ident)
-    (qbeTy, val) <- expressionToVal expression
-    emit (Store qbeTy val ("%" <> offsetted))
+    val <- expressionToVal' expression
+    emit (Store (toQbeStoreTy fieldType) val ("%" <> offsetted))
 
 isStructQbeTy = isPrefixOf ":"
 
@@ -393,10 +391,34 @@ emitCopyField fields left right (fieldName, fieldType) = do
     leftOffsetted <- createOffset fields fieldName left
     rightOffsetted <- createOffset fields fieldName right
     let qbeTy = toQbeTy fieldType
-    let loadTy = toQbeLoadTy fieldType
+    let storeTy = toQbeStoreTy fieldType
     loaded <- newIdent ".local"
-    emit (Instruction loaded qbeTy ("load" <> loadTy) ["%" <> rightOffsetted])
-    emit (Store qbeTy ("%" <> loaded) ("%" <> leftOffsetted))
+    emit (Instruction loaded qbeTy ("load" <> qbeTy) ["%" <> rightOffsetted])
+    emit (Store storeTy ("%" <> loaded) ("%" <> leftOffsetted))
+
+-- TODO remove overlap by finding general rules
+emitCast parameterType targetType val | parameterType == targetType = return (toQbeTy targetType, val)
+emitCast (PointerType _) (PointerType _) val = return (pointerTy, val)
+emitCast (Concrete "int" []) (Concrete "uint" []) val = return ("w", val)
+emitCast (Concrete "uint" []) (Concrete "int" []) val = return ("w", val)
+emitCast (Concrete "int" []) (Concrete "ushort" []) val = return ("uh", val)
+emitCast (Concrete "int" []) (Concrete "short" []) val = return ("sh", val)
+emitCast (Concrete "int" []) (Concrete "char" []) val = return ("ub", val)
+emitCast (Concrete "char" []) (Concrete "int" []) val = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent "w" "extub" [val])
+    return ("w", "%" <> freshIdent)
+emitCast (Concrete "ushort" []) (Concrete "int" []) val = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent "w" "extuh" [val])
+    return ("w", "%" <> freshIdent)
+emitCast (Concrete "short" []) (Concrete "int" []) val = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent "w" "extsh" [val])
+    return ("w", "%" <> freshIdent)
+emitCast parameterType targetType _ =
+    fail ("Conversion from " ++ show parameterType ++ " to "
+        ++ show targetType ++ " not implemented yet")
 
 literalToVal :: Literal -> ReaderT Builder IO Val
 literalToVal (StringLiteral str) = registerConstant str
@@ -420,39 +442,39 @@ pointerTy = "l"
 voidTy :: Ty
 voidTy = ""
 
--- TODO a byte load is extended to w like the following:
--- %.6 =w loadsb %.5
-
--- Handles signedness, used for function signatures and loads
-toQbeLoadTy :: Type -> Ty
-toQbeLoadTy (Concrete "ushort" []) = "uh"
-toQbeLoadTy (Concrete "uint" []) = "uw"
--- void type is just left empty for functions
-toQbeLoadTy (Concrete "void" []) = voidTy
-toQbeLoadTy ty = toQbeStoreTy ty
-
 -- Handles sub-word types, used for data types and stores
 -- sign does not matter
 toQbeStoreTy :: Type -> Ty
-toQbeStoreTy (Concrete "char" []) = "b"
-toQbeStoreTy (Concrete "short" []) = "h"
-toQbeStoreTy (Concrete "ushort" []) = "h"
-toQbeStoreTy ty = toQbeTy ty
+toQbeStoreTy ty = case toQbeTy ty of
+    "ub" -> "b"
+    "sh" -> "h"
+    "uh" -> "h"
+    other -> other
+
+-- Temporaries have to have at least word size
+toQbeWordTy :: Type -> Ty
+toQbeWordTy ty = case toQbeTy ty of
+    "ub" -> "w"
+    "sh" -> "w"
+    "uh" -> "w"
+    other -> other
 
 -- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
-toQbeTy (Concrete "void" []) = voidTy
-toQbeTy (Concrete "char" []) = "w"
-toQbeTy (Concrete "short" []) = "w"
-toQbeTy (Concrete "ushort" []) = "w"
 toQbeTy (Concrete "bool" []) = "w"
+toQbeTy (Concrete "char" []) = "ub"
+toQbeTy (Concrete "short" []) = "sh"
+toQbeTy (Concrete "ushort" []) = "uh"
 toQbeTy (Concrete "int" []) = "w"
+-- loadw can be used insted of loaduw because signed does not matter
 toQbeTy (Concrete "uint" []) = "w"
 toQbeTy (Concrete "long" []) = "l"
 toQbeTy (Concrete "ulong" []) = "l"
 toQbeTy (Concrete "usize" []) = "l"
 toQbeTy (Concrete "float" []) = "s"
 toQbeTy (Concrete "double" []) = "d"
+-- void type is just left empty for functions
+toQbeTy (Concrete "void" []) = voidTy
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
@@ -497,8 +519,8 @@ statementToDef (Definition (Name name ty) (Literal l)) = do
 -- TODO ensure that a block for a function ends with a ret
 -- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    let qbeParams = fmap (\(Name n t) -> (toQbeLoadTy t, n)) parameters
-    let returnType = toQbeLoadTy ty
+    let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
+    let returnType = toQbeTy ty
     blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
     let blocks' = addRetIfMissing returnType blocks
     return [FuncDef returnType name qbeParams blocks']
