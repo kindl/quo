@@ -401,21 +401,71 @@ emitCast (Concrete "uint" []) (Concrete "int" []) val = return val
 emitCast (Concrete "int" []) (Concrete "ushort" []) val = return val
 emitCast (Concrete "int" []) (Concrete "short" []) val = return val
 emitCast (Concrete "int" []) (Concrete "char" []) val = return val
-emitCast (Concrete "char" []) (Concrete "int" []) val = do
+emitCast (Concrete "ulong" []) (Concrete "int" []) val = return val
+emitCast (Concrete "int" []) (Concrete "ulong" []) val = return val
+emitCast (Concrete "long" []) (Concrete "int" []) val = return val
+emitCast (Concrete "ulong" []) (Concrete "long" []) val = return val
+emitCast (Concrete "long" []) (Concrete "ulong" []) val = return val
+-- TODO these probably work on smaller types, e.g. char to long
+emitCast (Concrete "uint" []) (Concrete "long" []) val = do
     freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "w" "extub" [val])
+    emit (Instruction freshIdent "l" "extuw" [val])
     return ("%" <> freshIdent)
-emitCast (Concrete "ushort" []) (Concrete "int" []) val = do
+emitCast (Concrete "int" []) (Concrete "long" []) val = do
     freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "w" "extuh" [val])
+    emit (Instruction freshIdent "l" "extsw" [val])
     return ("%" <> freshIdent)
-emitCast (Concrete "short" []) (Concrete "int" []) val = do
+emitCast (Concrete "char" []) targetType val | isIntegerType targetType = do
     freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "w" "extsh" [val])
+    emit (Instruction freshIdent (toQbeTy targetType) "extub" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "ushort" []) targetType val | isIntegerType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "extuh" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "short" []) targetType val | isIntegerType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "extsh" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "int" []) targetType val | isFloatingType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "swtof" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "uint" []) targetType val | isFloatingType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "uwtof" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "long" []) targetType val | isFloatingType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "sltof" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "ulong" []) targetType val | isFloatingType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "ultof" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "float" []) (Concrete "double" []) val = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent "d" "exts" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "double" []) (Concrete "float" []) val = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent "s" "truncd" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "double" []) targetType val | isIntegerType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "dtosi" [val])
+    return ("%" <> freshIdent)
+emitCast (Concrete "float" []) targetType val | isIntegerType targetType = do
+    freshIdent <- newIdent ".local"
+    emit (Instruction freshIdent (toQbeTy targetType) "stosi" [val])
     return ("%" <> freshIdent)
 emitCast parameterType targetType _ =
     fail ("Conversion from " ++ show parameterType ++ " to "
         ++ show targetType ++ " not implemented yet")
+
+isFloatingType ty = doubleType == ty || floatType == ty
+isIntegerType ty = charType == ty || shortType == ty || ushortType == ty
+    || intType == ty || uintType == ty || longType == ty || ulongType == ty
 
 literalToVal :: Literal -> ReaderT Builder IO Val
 literalToVal (StringLiteral str) = registerConstant str
@@ -559,7 +609,6 @@ prettyParam (ty, val) = prettyTy ty <+> prettyVal val
 -- For data definitions
 prettyData :: (Ty, Val) -> Doc a
 prettyData = prettyParam
-
 
 prettyTy :: Ty -> Doc a
 prettyTy ty = fromText ty

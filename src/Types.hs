@@ -25,6 +25,15 @@ voidType = Concrete "void" []
 boolType :: Type
 boolType = Concrete "bool" []
 
+charType :: Type
+charType = Concrete "char" []
+
+shortType :: Type
+shortType = Concrete "short" []
+
+ushortType :: Type
+ushortType = Concrete "ushort" []
+
 intType :: Type
 intType = Concrete "int" []
 
