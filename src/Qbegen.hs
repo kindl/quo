@@ -227,6 +227,7 @@ pointerSize = 8
 -- TODO does the return need to be Word64?
 -- When are structs that big?
 getSize :: StructLookup -> Type -> Int32
+getSize _ (Concrete "bool" []) = 4
 getSize _ (Concrete "char" []) = 1
 getSize _ (Concrete "short" []) = 2
 getSize _ (Concrete "ushort" []) = 2
