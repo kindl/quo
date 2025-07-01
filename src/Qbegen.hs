@@ -233,7 +233,7 @@ pointerSize = 8
 -- TODO does the return need to be Word64?
 -- When are structs that big?
 getSize :: StructLookup -> Type -> Int32
-getSize _ (Concrete "bool" []) = 4
+getSize _ (Concrete "bool" []) = 1
 getSize _ (Concrete "char" []) = 1
 getSize _ (Concrete "short" []) = 2
 getSize _ (Concrete "ushort" []) = 2
@@ -502,8 +502,8 @@ literalToText (Int64 l) = pack (show l)
 literalToText (UInt64 l) = pack (show l)
 literalToText (Float32 l) = "s_" <> pack (show l)
 literalToText (Float64 l) = "d_" <> pack (show l)
-literalToText (Bool True) = "true"
-literalToText (Bool False) = "false"
+literalToText (Bool True) = "1"
+literalToText (Bool False) = "0"
 literalToText (StringLiteral _) =
     error "String literals have to be handled with literalToVal"
 
@@ -532,7 +532,7 @@ toQbeWordTy ty = case toQbeTy ty of
 
 -- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
-toQbeTy (Concrete "bool" []) = "w"
+toQbeTy (Concrete "bool" []) = "ub"
 toQbeTy (Concrete "char" []) = "ub"
 toQbeTy (Concrete "short" []) = "sh"
 toQbeTy (Concrete "ushort" []) = "uh"
