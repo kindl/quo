@@ -40,7 +40,6 @@ baseEnv =
         ("||", FunctionType boolType [boolType, boolType]),
         ("&&", FunctionType boolType [boolType, boolType]),
         -- Arithmetic
-        -- TODO return type
         ("-_", FunctionType auto [auto]),
         ("+", FunctionType auto [auto, auto]),
         ("-", FunctionType auto [auto, auto]),
@@ -320,6 +319,8 @@ subsumes _ b | b == auto = True
 -- TODO find a solution for passing arrays to functions expecting a pointer
 subsumes (ArrayType elementType _) (PointerType pointerType) =
     subsumes elementType pointerType
+subsumes (ArrayType a _) (ArrayType b _) =
+    subsumes a b
 subsumes a b = a == b
 
 findFields :: Type -> ReaderT Env IO TypeLookup
