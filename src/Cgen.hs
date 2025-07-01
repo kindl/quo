@@ -117,6 +117,7 @@ parensWrapped e =
 typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
 typeToC (Concrete "void" []) = "void"
+typeToC (Concrete "bool" []) = "bool"
 typeToC (Concrete "char" []) = "char"
 typeToC (Concrete "short" []) = "short int"
 typeToC (Concrete "ushort" []) = "unsigned short int"
