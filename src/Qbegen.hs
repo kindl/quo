@@ -312,20 +312,49 @@ expressionToVal (Apply expression expressions) = do
     let zipped = zip parameterTys vals
     emit (CallInstruction freshIdent retTy val zipped)
     return ("%" <> freshIdent)
+expressionToVal (SquareAccess expression accessor) = do
+    -- This will hold the accessor converted to size
+    extVal <- newIdent ".local"
+    -- This will hold the accessor times element size
+    mulVal <- newIdent ".local"
+    -- This will hold the offsetted pointer
+    offsetVal <- newIdent ".local"
+    -- This will hold the read memory
+    freshIdent <- newIdent ".local"
+    val <- expressionToVal expression
+    accessorVal <- expressionToVal accessor
+    structEnv <- asks getStructs
+    let (ArrayType elementType _) = readType expression
+    elementSize <- getSizeAsVal elementType
+    let qbeTy = toQbeTy elementType
+
+    emit (Instruction extVal pointerTy "extsw" [accessorVal])
+    emit (Instruction mulVal pointerTy "mul" ["%" <> extVal, elementSize])
+    emit (Instruction offsetVal pointerTy "add" [val, "%" <> mulVal])
+
+    if isStructQbeTy qbeTy
+        -- When accessing an int[] a with a[1] the result will be an int and loaded into a temporary
+        then return ("%" <> offsetVal)
+        -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
+        else do
+            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetVal])
+            return ("%" <> freshIdent)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     -- This will hold the offsetted pointer
-    offsetted <- newIdent ".local"
+    offsetVal <- newIdent ".local"
     -- This will hold the read memory
     freshIdent <- newIdent ".local"
     val <- expressionToVal expression
     let structType = readType expression
     fields <- findFields structType
     offset <- getOffsetAsVal fieldName fields
-    emit (Instruction offsetted pointerTy "add" [val, offset])
+    emit (Instruction offsetVal pointerTy "add" [val, offset])
     let qbeTy = toQbeTy fieldType
     if isStructQbeTy qbeTy
-        then return ("%" <> offsetted)
-        else emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetted]) >> return ("%" <> freshIdent)
+        then return ("%" <> offsetVal)
+        else do
+            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetVal])
+            return ("%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
