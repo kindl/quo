@@ -270,13 +270,11 @@ expressionToVal (Variable (Name name ty) []) = do
     if wasParam || wasStruct
         then return ("%" <> name)
         else do
-            freshIdent <- newIdent ".local"
             wasGlobal <- isGlobal name
             let sigil = if wasGlobal then "$" else "%"
             -- Local variables are either an address to the stack or global
             -- so a load instruction is necessary
-            emit (Instruction freshIdent (toQbeWordTy ty) ("load" <> qbeTy) [sigil <> name])
-            return ("%" <> freshIdent)
+            emitLoad ty (sigil <> name)
 expressionToVal (Literal l) =
     literalToVal l
 expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
@@ -321,8 +319,6 @@ expressionToVal (SquareAccess expression accessor) = do
     mulVal <- newIdent ".local"
     -- This will hold the offsetted pointer
     offsetVal <- newIdent ".local"
-    -- This will hold the read memory
-    freshIdent <- newIdent ".local"
     val <- expressionToVal expression
     accessorVal <- expressionToVal accessor
     structEnv <- asks getStructs
@@ -335,17 +331,13 @@ expressionToVal (SquareAccess expression accessor) = do
     emit (Instruction offsetVal pointerTy "add" [val, "%" <> mulVal])
 
     if isStructQbeTy qbeTy
-        -- When accessing an int[] a with a[1] the result will be an int and loaded into a temporary
-        then return ("%" <> offsetVal)
         -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
-        else do
-            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetVal])
-            return ("%" <> freshIdent)
+        then return ("%" <> offsetVal)
+        -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
+        else emitLoad elementType ("%" <> offsetVal)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     -- This will hold the offsetted pointer
     offsetVal <- newIdent ".local"
-    -- This will hold the read memory
-    freshIdent <- newIdent ".local"
     val <- expressionToVal expression
     let structType = readType expression
     fields <- findFields structType
@@ -354,9 +346,7 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     let qbeTy = toQbeTy fieldType
     if isStructQbeTy qbeTy
         then return ("%" <> offsetVal)
-        else do
-            emit (Instruction freshIdent qbeTy ("load" <> qbeTy) ["%" <> offsetVal])
-            return ("%" <> freshIdent)
+        else emitLoad fieldType ("%" <> offsetVal)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -442,11 +432,22 @@ emitCopyField :: TypeLookup -> Val -> Val -> (Text, Type) -> Emit ()
 emitCopyField fields left right (fieldName, fieldType) = do
     leftOffsetted <- createOffset fields fieldName left
     rightOffsetted <- createOffset fields fieldName right
-    let qbeTy = toQbeTy fieldType
+    loadedVal <- emitLoad fieldType ("%" <> rightOffsetted)
     let storeTy = toQbeStoreTy fieldType
+    emit (Store storeTy loadedVal ("%" <> leftOffsetted))
+
+emitLoad ty val = do
+    let broadQbeTy = toQbeWordTy ty
+    let qbeTy = toQbeTy ty
     loaded <- newIdent ".local"
-    emit (Instruction loaded qbeTy ("load" <> qbeTy) ["%" <> rightOffsetted])
-    emit (Store storeTy ("%" <> loaded) ("%" <> leftOffsetted))
+    emit (Instruction loaded broadQbeTy ("load" <> qbeTy) [val])
+    if broadQbeTy == qbeTy
+        then return ("%" <> loaded)
+        else do
+            extended <- newIdent ".local"
+            emit (Instruction extended broadQbeTy ("ext" <> qbeTy) ["%" <> loaded])
+            return ("%" <> extended)
+
 
 -- TODO remove overlap by finding general rules
 emitCast :: Type -> Type -> Text -> Emit Text
