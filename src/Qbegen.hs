@@ -295,8 +295,10 @@ expressionToVal (Apply (Variable (Name name (FunctionType returnType parameterTy
     let zipped = zip parameterTys vals
     if isOperator name
         then emitOperator freshIdent retTy name zipped
-        -- TODO local functions
-        else emit (CallInstruction freshIdent retTy ("$" <> name) zipped)
+        else do
+            wasGlobal <- isGlobal name
+            let sigil = if wasGlobal then "$" else "%"
+            emit (CallInstruction freshIdent retTy (sigil <> name) zipped)
     return ("%" <> freshIdent)
 -- TODO Should the following case be allowed? For example for currying?
 -- Probably not very interesting without closuses, but possible
