@@ -171,7 +171,11 @@ emitBranches endLabel ((condition, statements):rest) maybeElseBranch = do
     emit (JumpNonZero val thenLabel elseLabel)
     emit (Label thenLabel)
     toBlock statements
-    emit (Jump endLabel)
+    -- Only emit a jump if there is no ret
+    -- It is a syntax error to have a jmp after a ret.
+    if not (null statements) && isReturn (last statements)
+        then return ()
+        else emit (Jump endLabel)
 
     emit (Label elseLabel)
     emitBranches endLabel rest maybeElseBranch
@@ -586,12 +590,11 @@ statementToDef :: Statement -> Emit [Def]
 statementToDef (Definition (Name name ty) (Literal l)) = do
     val <- literalToVal l
     return [DataDef name [(toQbeStoreTy ty, val)]]
--- TODO ensure that a block for a function ends with a ret
--- we can't just check if the last block stat is a ret
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
     let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
     let returnType = toQbeTy ty
     blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
+    -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing returnType blocks
     return [FuncDef returnType name qbeParams blocks']
 statementToDef _ = return []
@@ -605,6 +608,10 @@ addRetIfMissing ty blocks =
 isRet :: Block -> Bool
 isRet (Ret _) = True
 isRet _ = False
+
+isReturn :: Statement -> Bool
+isReturn (Return _) = True
+isReturn _ = False
 
 structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
