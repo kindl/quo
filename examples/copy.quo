@@ -1,7 +1,4 @@
-// TODO opaque types like
-// extern struct FILE;
-
-module example;
+module copy;
 
 extern int puts(Pointer<char> str);
 extern Pointer<FILE> fopen(Pointer<char> filename, Pointer<char> mode);
@@ -12,34 +9,35 @@ extern Pointer<void> malloc(usize size);
 
 int EOF = -1;
 
-/*
-TODO inline
-Pointer<T> alloc<T>() {
-    return cast<Pointer<T>>(malloc(sizeof<T>()));
-}
-*/
-
 void copyWithLoop(Pointer<FILE> srcFileHandle, Pointer<FILE> destFileHandle)
 {
-    auto c = fgetc(srcFileHandle);
+    let c = fgetc(srcFileHandle);
     while (c != EOF) {
         fputc(c, destFileHandle);
         c = fgetc(srcFileHandle);
     }
 }
 
-int main()
-{
-    auto src = "test.txt";
-    auto dest = "test copy.txt";
+// This code has some issues
+// First, it does not copy file meta data like executable flags
+// Second, it does not have proper cleanup code
+// It should be revisited when quo provides more cleanup capabilities
+int main(int argc, Pointer<char>[] argv) {
+    if (argc < 3) {
+        puts("Usage: copy <source> <destionation>");
+        return -1;
+    }
+    
+    let src = argv[1];
+    let dest = argv[2];
 
-    auto srcFileHandle = fopen(src, "r");
+    let srcFileHandle = fopen(src, "r");
     if (srcFileHandle == nullptr)
     {
         return -1;
     }
 
-    auto destFileHandle = fopen(dest, "w");
+    let destFileHandle = fopen(dest, "w");
     if (destFileHandle == nullptr)
     {
         return -1;
