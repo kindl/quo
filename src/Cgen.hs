@@ -66,6 +66,8 @@ nameToC (Name name (ArrayType ty maybeSize)) =
     typeToC ty <+> fromText name <> (case maybeSize of
         Nothing -> "*"
         Just size -> "[" <> fromText (pack (show size)) <> "]")
+nameToC (Name name (FunctionType returnType parameterTypes)) =
+    typeToC returnType <+> parens ("*" <+> fromText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
 nameToC (Name name ty) =
     typeToC ty <+> fromText name
 
