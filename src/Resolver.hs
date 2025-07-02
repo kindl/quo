@@ -66,7 +66,6 @@ resolveModule (Module name statements) =
         resolved <- with' annotations structs (resolveDefinitions statements)
         return (Module name resolved)
 
-
 resolveDefinitions :: [Statement] -> ReaderT Env IO [Statement]
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
@@ -164,13 +163,11 @@ resolveBranch :: Type -> (Expression, [Statement]) -> ReaderT Env IO (Expression
 resolveBranch conditionType (condition, statements) =
     liftA2 (,) (resolveExpression condition conditionType) (resolveStatements statements)
 
-
 nameToPair :: Name -> (Text, Type)
 nameToPair (Name n t) = (n, t)
 
 entry :: Text -> Type -> TypeLookup
 entry text value = [(text, value)]
-
 
 gatherAnnotations :: [Statement] -> TypeLookup
 gatherAnnotations = foldMap gatherAnnotation
@@ -274,6 +271,7 @@ resolveExpression e@(Literal l) expectedType =
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
 
 -- TODO handle conversions, for example 1 == 1.0
+resolveOperator :: Type -> Expression -> [Expression] -> Expression
 resolveOperator returnType (Variable (Name name _) []) [resolved] =
     let
         parameterType = readType resolved

@@ -45,6 +45,7 @@ find name env = case lookup name env of
     Nothing -> fail ("Cannot find name " ++ show name ++ " in env " ++ show env)
     Just found -> return found
 
+isConstructor :: Name -> Bool
 isConstructor (Name name (FunctionType (Concrete structName []) _)) =
     name == structName
 isConstructor (Name _ _) = False
