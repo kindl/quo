@@ -10,9 +10,8 @@ import Helpers((<//>), intercalate, fromText, escape, indent, isConstructor)
 prettyC :: Module -> Doc ann
 prettyC (Module _ s) = preamble <> intercalate "\n\n" (fmap statementToC s)
 
--- stddef is necessary for size_t
 preamble :: Doc ann
-preamble = fromText "// This file was generated with quo\n#include <stddef.h>\n\n"
+preamble = fromText "// This file was generated with quo\ntypedef unsigned long long size_t;\n\n"
 
 statementToC :: Statement -> Doc ann
 statementToC (Definition name e) =
