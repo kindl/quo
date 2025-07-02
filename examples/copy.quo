@@ -27,7 +27,7 @@ int main(int argc, Pointer<char>[] argv) {
         puts("Usage: copy <source> <destionation>");
         return -1;
     }
-    
+
     let src = argv[1];
     let dest = argv[2];
 

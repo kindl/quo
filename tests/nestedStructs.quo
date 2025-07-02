@@ -1,0 +1,49 @@
+// Example code for nested structs
+module nestedStructs;
+
+extern int putchar(int c);
+
+struct Vector2Int
+{
+    int x;
+    int y;
+};
+
+struct Matrix
+{
+    Vector2Int v;
+    Vector2Int w;
+};
+
+int getX(Matrix c) {
+    return c.v.x;
+}
+
+int getY(Matrix c) {
+    return c.v.y;
+}
+
+int getZ(Matrix c) {
+    return c.w.x;
+}
+
+int getN(Matrix c) {
+    return c.w.y;
+}
+
+Vector2Int getV(Matrix c) {
+    return c.v;
+}
+
+Vector2Int makeVector2Int(int i) {
+    return Vector2Int(i, 100);
+}
+
+Matrix makeMatrix(int x, int y, int z) {
+    return Matrix(Vector2Int(x, y), makeVector2Int(z));
+}
+
+int main() {
+    putchar(getN(makeMatrix(107, 108, 109)));
+    return 0;
+}

@@ -1,0 +1,24 @@
+extern int putchar(int c);
+
+struct Option<T> {
+    T value;
+    bool hasValue;
+};
+
+Option<T2> mapOption<T1, T2>(Fn<T1, T2> f, Option<T1> option) {
+    if (option.hasValue) {
+        return Option<T2>(f(option.value), true);
+    } else {
+        return Option<T2>(0, false);
+    }
+}
+
+int plusHundred(int x) {
+    return x + 100;
+}
+
+void main() {
+    let x = Option<int>(2, true);
+    let y = mapOption<int, int>(plusHundred, x);
+    putchar(y.value);
+}

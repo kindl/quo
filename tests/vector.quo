@@ -1,0 +1,24 @@
+// Example code for vectors
+module vector;
+
+extern int putchar(int c);
+
+struct Vector3Int
+{
+    int x;
+    int y;
+    int z;
+};
+
+int getX(Vector3Int v) {
+    return v.x;
+}
+
+Vector3Int make(int x, int y, int z) {
+    return Vector3Int(x, y, z);
+}
+
+int main() {
+    putchar(Vector3Int(107, 107, 107).x);
+    return 0;
+}

@@ -1,0 +1,39 @@
+extern int putchar(int c);
+
+void lol(char c) {
+    int x = cast<int>(c);
+}
+
+T f<T>() {
+    return cast<T>(102);
+}
+
+void put<T>(T c) {
+    putchar(cast<int>(c));
+}
+
+int main() {
+    char c = f<char>();
+    short s = f<short>();
+    ushort us = f<ushort>();
+    int i = f<int>();
+    uint ui = f<uint>();
+    long l = f<long>();
+    ulong ul = f<ulong>();
+    float fl = f<float>();
+    double d = f<double>();
+
+    put<char>(c);
+    put<short>(s);
+    put<ushort>(us);
+    put<int>(i);
+    put<uint>(ui);
+    put<long>(l);
+    put<ulong>(ul);
+    put<float>(fl);
+    put<double>(d);
+
+    putchar(10);
+
+    return 0;
+}

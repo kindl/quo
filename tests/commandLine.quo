@@ -1,0 +1,11 @@
+extern int puts(Pointer<char> s);
+
+int main(int argc, Pointer<char>[] argv) {
+    int currentParameter = 0;
+    while (currentParameter < argc) {
+        puts(argv[currentParameter]);
+        currentParameter = currentParameter + 1;
+    }
+
+    return 0;
+}

@@ -1,0 +1,23 @@
+extern int putchar(int c);
+
+struct AllTheTypes {
+    char c;
+    short s;
+    ushort u;
+};
+
+int newline = 10;
+
+void putAllFields(AllTheTypes t) {
+    putchar(cast<int>(t.c));
+    putchar(10);
+    putchar(cast<int>(t.s));
+    putchar(10);
+    putchar(cast<int>(t.u));
+    putchar(10);
+}
+
+void main() {
+    let l = AllTheTypes(cast<char>(100), cast<short>(100), cast<ushort>(100));
+    putAllFields(l);
+}

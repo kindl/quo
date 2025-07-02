@@ -1,0 +1,23 @@
+// Example code for nested structs
+module structAssignment;
+
+extern int putchar(int c);
+
+struct Vector5Int
+{
+    int x;
+    int y;
+    int z;
+    int v;
+    int w;
+};
+
+int getV(Vector5Int v) {
+    return v.v;
+}
+
+int main() {
+    Vector5Int a = Vector5Int(101, 102, 103, 104, 105);
+    putchar(getV(a));
+    return 0;
+}
