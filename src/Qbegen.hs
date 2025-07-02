@@ -117,7 +117,7 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     wasGlobal <- isGlobal name
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal rightHand
-    emit (Store (toQbeStoreTy ty) val ("%" <> name))
+    emitStore ty val ("%" <> name)
 statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
     emitAlloc ident structType
     fields <- findFields structType
@@ -129,7 +129,7 @@ statementToBlock (Definition (Name name ty) expression) = do
     -- for example in a while-loop
     emitAlloc name ty
     val <- expressionToVal expression
-    emit (Store (toQbeStoreTy ty) val ("%" <> name))
+    emitStore ty val ("%" <> name)
 statementToBlock (If branches maybeElseBranch) = do
     endLabel <- newLabel "end"
     emitBranches endLabel branches maybeElseBranch
@@ -264,21 +264,16 @@ expressionToVal :: Expression -> Emit Val
 expressionToVal (Variable (Name "nullptr" _) []) =
     return "0"
 expressionToVal (Variable (Name name ty) []) = do
-    let qbeTy = toQbeTy ty
     wasParam <- isParam name
-    let wasStruct = isStructQbeTy qbeTy
-    if wasParam || wasStruct
-        then return ("%" <> name)
-        else do
-            wasGlobal <- isGlobal name
-            let sigil = if wasGlobal then "$" else "%"
-            -- Local variables are either an address to the stack or global
-            -- so a load instruction is necessary
-            emitLoad ty (sigil <> name)
+    wasGlobal <- isGlobal name
+    let sigil = if wasGlobal then "$" else "%"
+    if wasParam
+        then return (sigil <> name)
+        else emitLoadOrVal ty (sigil <> name)
 expressionToVal (Literal l) =
     literalToVal l
 expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
-    emitStruct returnType expressions
+    emitConstructor returnType expressions
 expressionToVal (Apply (Variable (Name "cast" _) [targetType]) [parameter]) = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
@@ -321,20 +316,14 @@ expressionToVal (SquareAccess expression accessor) = do
     offsetVal <- newIdent ".local"
     val <- expressionToVal expression
     accessorVal <- expressionToVal accessor
-    structEnv <- asks getStructs
     let (ArrayType elementType _) = readType expression
     elementSize <- getSizeAsVal elementType
-    let qbeTy = toQbeTy elementType
 
     emit (Instruction extVal pointerTy "extsw" [accessorVal])
     emit (Instruction mulVal pointerTy "mul" ["%" <> extVal, elementSize])
     emit (Instruction offsetVal pointerTy "add" [val, "%" <> mulVal])
 
-    if isStructQbeTy qbeTy
-        -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
-        then return ("%" <> offsetVal)
-        -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
-        else emitLoad elementType ("%" <> offsetVal)
+    emitLoadOrVal elementType ("%" <> offsetVal)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     -- This will hold the offsetted pointer
     offsetVal <- newIdent ".local"
@@ -343,10 +332,7 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     fields <- findFields structType
     offset <- getOffsetAsVal fieldName fields
     emit (Instruction offsetVal pointerTy "add" [val, offset])
-    let qbeTy = toQbeTy fieldType
-    if isStructQbeTy qbeTy
-        then return ("%" <> offsetVal)
-        else emitLoad fieldType ("%" <> offsetVal)
+    emitLoadOrVal fieldType ("%" <> offsetVal)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -383,8 +369,9 @@ emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
-emitStruct :: Type -> [Expression] -> Emit Text
-emitStruct structType expressions = do
+-- For generating structs
+emitConstructor :: Type -> [Expression] -> Emit Text
+emitConstructor structType expressions = do
     ident <- newIdent ".local"
     emitAlloc ident structType
     fields <- findFields structType
@@ -407,34 +394,52 @@ emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressi
 -- Matrix(Vector2Int(x, y), makeVector2Int(z))
 -- After creating a value, fields are copied one by one
 -- this probably could be reused for assigning structs
-emitField fields ident (fieldName, fieldType) expression | isStructQbeTy (toQbeTy fieldType) = do
-    offsetted <- createOffset fields fieldName ("%" <> ident)
-    nestedFields <- findFields fieldType
-    val <- expressionToVal expression
-    traverse_ (emitCopyField nestedFields ("%" <> offsetted) val) nestedFields
--- For base types
 emitField fields ident (fieldName, fieldType) expression = do
-    offsetted <- createOffset fields fieldName ("%" <> ident)
+    offsetVal <- createOffset fields fieldName ("%" <> ident)
     val <- expressionToVal expression
-    emit (Store (toQbeStoreTy fieldType) val ("%" <> offsetted))
+    emitStore fieldType val offsetVal
 
 isStructQbeTy :: Text -> Bool
 isStructQbeTy = isPrefixOf ":"
 
-createOffset :: TypeLookup -> Text -> Val -> Emit Text
-createOffset fields fieldName val = do
-    offsetted <- newIdent ".local"
-    offset <- getOffsetAsVal fieldName fields
-    emit (Instruction offsetted pointerTy "add" [val, offset])
-    return offsetted
+isFunctionType (FunctionType _ _) = True
+isFunctionType _ = False
 
-emitCopyField :: TypeLookup -> Val -> Val -> (Text, Type) -> Emit ()
-emitCopyField fields left right (fieldName, fieldType) = do
-    leftOffsetted <- createOffset fields fieldName left
-    rightOffsetted <- createOffset fields fieldName right
-    loadedVal <- emitLoad fieldType ("%" <> rightOffsetted)
-    let storeTy = toQbeStoreTy fieldType
-    emit (Store storeTy loadedVal ("%" <> leftOffsetted))
+createOffset :: TypeLookup -> Text -> Val -> Emit Val
+createOffset fields fieldName val = do
+    offset <- getOffsetAsVal fieldName fields
+    if offset == "0"
+        then return val
+        else do
+            offsetted <- newIdent ".local"
+            emit (Instruction offsetted pointerTy "add" [val, offset])
+            return ("%" <> offsetted)
+
+emitStore structType val mem =
+    let storeTy = toQbeStoreTy structType
+    in if isStructQbeTy storeTy
+        then emitStoreFields structType val mem
+        else emit (Store storeTy val mem)
+
+emitStoreFields structType val mem = do
+    nestedFields <- findFields structType
+    traverse_ (emitStoreField nestedFields val mem) nestedFields
+
+-- case for struct1.x = struct2.x
+emitStoreField :: TypeLookup -> Val -> Val -> (Text, Type) -> Emit ()
+emitStoreField fields val mem (fieldName, fieldType) = do
+    valOffsetVal <- createOffset fields fieldName val
+    memOffsetVal <- createOffset fields fieldName mem
+    loadedVal <- emitLoadOrVal fieldType valOffsetVal
+    emitStore fieldType loadedVal memOffsetVal
+
+emitLoadOrVal fieldType val = do
+    let qbeTy = toQbeTy fieldType
+    if isStructQbeTy qbeTy || isFunctionType fieldType
+        -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
+        then return val
+        -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
+        else emitLoad fieldType val
 
 emitLoad ty val = do
     let broadQbeTy = toQbeWordTy ty
@@ -447,7 +452,6 @@ emitLoad ty val = do
             extended <- newIdent ".local"
             emit (Instruction extended broadQbeTy ("ext" <> qbeTy) ["%" <> loaded])
             return ("%" <> extended)
-
 
 -- TODO remove overlap by finding general rules
 emitCast :: Type -> Type -> Text -> Emit Text
@@ -631,7 +635,13 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     return [FuncDef returnType name qbeParams blocks']
 statementToDef _ = return []
 
--- TODO only add for void or always?
+-- TODO solve problem with void functions
+-- Following function:
+-- void main() { putchar(100); }
+-- would compile fine, but the ret would return the 100
+-- as error code.
+-- We can't simply end with ret 0, because this would be a syntax error for
+-- void functions.
 addRetIfMissing :: [Block] -> [Block]
 addRetIfMissing blocks =
     if endsWithRet blocks
