@@ -84,7 +84,7 @@ expoOp = liftA3 makeBinaryOp unOp (token "^") expoOp <|> unOp
 makeBinaryOp :: Expression -> Text -> Expression -> Expression
 makeBinaryOp a opName b = Apply (Variable (Name opName auto) []) [a, b]
 
-leftAssoc :: Alternative f => (t1 -> t2 -> t1 -> t1) -> f t2 -> f t1 -> f t1
+leftAssoc :: Alternative f => (t -> sep -> t -> t) -> f sep -> f t -> f t
 leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
