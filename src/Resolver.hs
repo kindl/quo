@@ -20,6 +20,8 @@ type StructLookup = [(Text, TypeLookup)]
 
 data Env = Env TypeLookup StructLookup
 
+type Resolve a = ReaderT Env IO a
+
 -- TODO handle operations on non matching types
 -- for example should the following be allowed or require an explicit conversion:
 -- 1 == 1.0
@@ -57,7 +59,7 @@ runResolve m = runReaderT (resolveModule m) baseEnv
 -- gather the structs to bring "constructors" in scope
 -- resolve all definitions, they need to be in order
 -- resolve all function definitions, they do not need to be in order, because we have all necessary types from annotations
-resolveModule :: Module -> ReaderT Env IO Module
+resolveModule :: Module -> Resolve Module
 resolveModule (Module name statements) =
     let
         annotations = gatherAnnotations statements
@@ -66,10 +68,10 @@ resolveModule (Module name statements) =
         resolved <- with' annotations structs (resolveDefinitions statements)
         return (Module name resolved)
 
-resolveDefinitions :: [Statement] -> ReaderT Env IO [Statement]
+resolveDefinitions :: [Statement] -> Resolve [Statement]
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
-resolveTop :: Statement -> ReaderT Env IO Statement
+resolveTop :: Statement -> Resolve Statement
 resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
     resolved <- with (fmap nameToPair parameters) (resolveStatements body)
     let returnTypes = fmap getReturnType (getReturns resolved)
@@ -103,10 +105,10 @@ getReturn (For _ _ statements) =
     getReturns statements
 getReturn _ = []
 
-getVariableEnv :: ReaderT Env IO TypeLookup
+getVariableEnv :: Resolve TypeLookup
 getVariableEnv = asks (\(Env e _) -> e)
 
-getStructEnv :: ReaderT Env IO StructLookup
+getStructEnv :: Resolve StructLookup
 getStructEnv = asks (\(Env _ e) -> e)
 
 with :: TypeLookup -> ReaderT Env m a -> ReaderT Env m a
@@ -116,10 +118,10 @@ with' :: TypeLookup -> StructLookup -> ReaderT Env m a -> ReaderT Env m a
 with' e s = local (\(Env variableEnv structEnv) -> Env (variableEnv <> e) (structEnv <> s))
 
 
-resolveStatements :: [Statement] -> ReaderT Env IO [Statement]
+resolveStatements :: [Statement] -> Resolve [Statement]
 resolveStatements = foldr (resolveDefinition resolveStatement) (return mempty)
 
-resolveDefinition :: (Statement -> ReaderT Env IO Statement) -> Statement -> ReaderT Env IO [Statement] -> ReaderT Env IO [Statement]
+resolveDefinition :: (Statement -> Resolve Statement) -> Statement -> Resolve [Statement] -> Resolve [Statement]
 resolveDefinition _ (Definition (Name name annotatedType) value) rest = do
     resolved <- resolveExpression value annotatedType
     -- If the type was inferred, replace with the result type, otherwise leave it
@@ -131,7 +133,7 @@ resolveDefinition f statement rest = do
     rest' <- rest
     return (resolved:rest')
 
-resolveStatement :: Statement -> ReaderT Env IO Statement
+resolveStatement :: Statement -> Resolve Statement
 resolveStatement (Return maybeExpression) =
     fmap Return (traverse (\e -> resolveExpression e auto) maybeExpression)
 resolveStatement (Call expression) =
@@ -159,7 +161,7 @@ resolveStatement (Switch expression branches) = do
 resolveStatement statement =
     fail ("Unexpected definition statement " ++ show statement)
 
-resolveBranch :: Type -> (Expression, [Statement]) -> ReaderT Env IO (Expression, [Statement])
+resolveBranch :: Type -> (Expression, [Statement]) -> Resolve (Expression, [Statement])
 resolveBranch conditionType (condition, statements) =
     liftA2 (,) (resolveExpression condition conditionType) (resolveStatements statements)
 
@@ -217,7 +219,7 @@ literalType (UInt64 _) = ulongType
 literalType (Float32 _) = floatType
 literalType (Float64 _) = doubleType
 
-resolveExpression :: Expression -> Type -> ReaderT Env IO Expression
+resolveExpression :: Expression -> Type -> Resolve Expression
 resolveExpression (Variable (Name "sizeof" _) [ty]) _ =
     -- Checking the expected type here is mostly not necessary,
     -- because functions are checked against auto first anyway
@@ -285,7 +287,7 @@ resolveOperator returnType (Variable (Name name _) []) [resolved1, resolved2] =
 resolveOperator _ other _ =
     error ("Cannot resolve operator " ++ show other)
 
-substitute :: Data a1 => [(Text, Type)] -> a1 -> a1
+substitute :: Data a => [(Text, Type)] -> a -> a
 substitute substitution m =
     let
         f t@(Concrete v []) =
@@ -321,7 +323,7 @@ subsumes (ArrayType a _) (ArrayType b _) =
     subsumes a b
 subsumes a b = a == b
 
-findFields :: Type -> ReaderT Env IO TypeLookup
+findFields :: Type -> Resolve TypeLookup
 findFields (Concrete structName []) = do
     structEnv <- getStructEnv
     find structName structEnv
