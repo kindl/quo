@@ -661,6 +661,7 @@ gatherGlobalNames = foldMap gatherGlobalName
 gatherGlobalName :: Statement -> [Text]
 gatherGlobalName (Definition (Name name _) _) = [name]
 gatherGlobalName (FunctionDefintion name _ _ _ _) = [name]
+gatherGlobalName (ExternDefintion name _ _) = [name]
 gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann
