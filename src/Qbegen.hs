@@ -121,7 +121,7 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
 statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
     emitAlloc ident structType
     fields <- findFields structType
-    zipParameters (emitField fields ident) fields expressions
+    zipParameters (emitField fields ("%" <> ident)) fields expressions
     return ()
 statementToBlock (Definition (Name name ty) expression) = do
     -- The allocation for locals are not emitted here, but per function.
@@ -326,13 +326,13 @@ expressionToVal (SquareAccess expression accessor) = do
     emitLoadOrVal elementType ("%" <> offsetVal)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     -- This will hold the offsetted pointer
-    offsetVal <- newIdent ".local"
+    offsetIdent <- newIdent ".local"
     val <- expressionToVal expression
     let structType = readType expression
     fields <- findFields structType
     offset <- getOffsetAsVal fieldName fields
-    emit (Instruction offsetVal pointerTy "add" [val, offset])
-    emitLoadOrVal fieldType ("%" <> offsetVal)
+    emit (Instruction offsetIdent pointerTy "add" [val, offset])
+    emitLoadOrVal fieldType ("%" <> offsetIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -375,7 +375,7 @@ emitConstructor structType expressions = do
     ident <- newIdent ".local"
     emitAlloc ident structType
     fields <- findFields structType
-    zipParameters (emitField fields ident) fields expressions
+    zipParameters (emitField fields ("%" <> ident)) fields expressions
     return ("%" <> ident)
 
 -- Nested struct creation:
@@ -384,9 +384,9 @@ emitConstructor structType expressions = do
 -- and build it with Matrix(Vector(1, 2), Vector(3, 4))
 -- then we don't want to allocate the Vectors, we just want to allocate Matrix
 -- and assign the individual ints.
-emitField :: TypeLookup -> Text -> (Text, Type) -> Expression -> Emit ()
-emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
-    offsetted <- createOffset fields fieldName ("%" <> ident)
+emitField :: TypeLookup -> Val -> (Text, Type) -> Expression -> Emit ()
+emitField fields var (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
+    offsetted <- createOffset fields fieldName var
     nestedFields <- findFields fieldType
     zipParameters (emitField nestedFields offsetted) nestedFields expressions
     return ()
@@ -394,8 +394,8 @@ emitField fields ident (fieldName, fieldType) (Apply (Variable name []) expressi
 -- Matrix(Vector2Int(x, y), makeVector2Int(z))
 -- After creating a value, fields are copied one by one
 -- this probably could be reused for assigning structs
-emitField fields ident (fieldName, fieldType) expression = do
-    offsetVal <- createOffset fields fieldName ("%" <> ident)
+emitField fields var (fieldName, fieldType) expression = do
+    offsetVal <- createOffset fields fieldName var
     val <- expressionToVal expression
     emitStore fieldType val offsetVal
 
@@ -602,7 +602,7 @@ registerConstant :: Text -> Emit Text
 registerConstant str = do
     freshName <- newIdent "string"
     ref <- asks getStringLiterals
-    let escaped = "\"" <> escape str <> "\\000\""
+    let escaped = "\"" <> escape str <> "\\0\""
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
     return ("$" <> freshName)
 
@@ -722,7 +722,6 @@ prettyBlock (CallInstruction ident ty f parameters) =
         then ""
         else "%" <> fromText ident <+> "=" <> prettyTy ty <+> "") <> "call" <+> fromText f <> parens (intercalate ", " (fmap prettyParam parameters)))
 prettyBlock (Store ty val addressVal) =
-    -- TODO ensure that ty is a base type
     indent ("store" <> fromText ty <+> prettyVal val <> "," <+> prettyVal addressVal)
 prettyBlock (Label label) =
     -- Label is not indented
