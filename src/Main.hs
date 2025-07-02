@@ -14,12 +14,14 @@ import System.Process(readProcess)
 import System.Directory(createDirectoryIfMissing)
 
 
+main :: IO ()
 main = do
     args <- getArgs
     case args of
         [path] -> compile path "out"
         _ -> putStrLn "Run with a input path like this `cabal run exes -- examples/example.h`"
 
+compile :: FilePath -> FilePath -> IO ()
 compile inputPath outputPath = do
     content <- Text.readFile inputPath
     parsed <- either fail return (parse Statements.moduleDefinition content)
