@@ -627,15 +627,20 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     let returnType = toQbeTy ty
     blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
-    let blocks' = addRetIfMissing returnType blocks
+    let blocks' = addRetIfMissing blocks
     return [FuncDef returnType name qbeParams blocks']
 statementToDef _ = return []
 
-addRetIfMissing :: Ty -> [Block] -> [Block]
-addRetIfMissing ty blocks =
-    if ty == voidTy && (null blocks || not (isRet (last blocks)))
-        then blocks ++ [Ret Nothing]
-        else blocks
+-- TODO only add for void or always?
+addRetIfMissing :: [Block] -> [Block]
+addRetIfMissing blocks =
+    if endsWithRet blocks
+        then blocks
+        else blocks ++ [Ret Nothing]
+
+endsWithRet :: [Block] -> Bool
+endsWithRet blocks =
+    not (null blocks) && isRet (last blocks)
 
 isRet :: Block -> Bool
 isRet (Ret _) = True
