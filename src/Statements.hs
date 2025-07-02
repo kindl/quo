@@ -6,13 +6,16 @@ import Control.Applicative((<|>), optional, many, liftA2, liftA3)
 import Data.Attoparsec.Combinator(option)
 import Types
 import Expressions
+import Data.Text(Text)
 
 
+moduleDefinition :: Parser Module
 moduleDefinition = do
     m <- option "main" (token "module" *> identifier <* token ";")
     s <- statements
     return (Module m s)
 
+statements :: Parser [Statement]
 statements = many (functionDefintion
     <|> externDefinition
     <|> importStatement
@@ -26,19 +29,24 @@ statements = many (functionDefintion
     <|> forStatement
     <|> whileStatement)
 
+assignmentStatement :: Parser Statement
 assignmentStatement =
     liftA2 Assignment statementExpression (token "=" *> expr) <* token ";"
 
+callStatement :: Parser Statement
 callStatement = do
     a@(Apply _ _) <- statementExpression <* token ";"
     return (Call a)
 
+returnStatement :: Parser Statement
 returnStatement = fmap Return (token "return" *> optional expr <* token ";")
 
+importStatement :: Parser Statement
 importStatement = liftA2 Import
     (token "import" *> identifier)
     (optional (curlies (sepByTrailing identifier (token ",")))) <* token ";"
 
+externDefinition :: Parser Statement
 externDefinition = do
     _ <- token "extern"
     t <- typeVariable
@@ -47,18 +55,21 @@ externDefinition = do
     _ <- token ";"
     return (ExternDefintion i t params)
 
+forStatement :: Parser Statement
 forStatement = do
     _ <- token "for"
     (i, t, e) <- parens forPart
     body <- curlies statements
     return (For (Name i t) e body)
 
+whileStatement :: Parser Statement
 whileStatement = do
     _ <- token "while"
     e <- parens expr
     body <- curlies statements
     return (While e body)
 
+forPart :: Parser (Text, Type, Expression)
 forPart =
     liftA3 (\t i e -> (i, t, e)) typeOrLet identifier (token "in" *> expr)
 
@@ -70,19 +81,25 @@ forPart =
 -- for example:
 -- let v = case { ... } can be turned into t v; case { ... -> v = expr }
 -- return case { ... } can be turned into case { ... -> return expr }
+switchStatement :: Parser Statement
 switchStatement =
     liftA2 Switch (token "switch" *> parens expr) (curlies (many switchOptions))
 
+switchOptions :: Parser (Expression, [Statement])
 switchOptions =
     liftA2 (,) (token "case" *> expr) (token "=>" *> curlies statements)
 
+definition :: Parser Statement
 definition =
     liftA3 (\t i e -> Definition (Name i t) e) typeOrLet identifier (token "=" *> expr <* token ";")
 
+typeOrLet :: Parser Type
 typeOrLet = (token "let" $> auto) <|> typeOrAuto
 
+typeOrAuto :: Parser Type
 typeOrAuto = (token "auto" $> auto) <|> typeVariable
 
+structDefinition :: Parser Statement
 structDefinition = do
     i <- token "struct" *> identifier
     ts <- option [] typeNameParameters
@@ -90,6 +107,7 @@ structDefinition = do
     _ <- token ";"
     return (StructDefinition i ts b)
 
+functionDefintion :: Parser Statement
 functionDefintion = do
     t <- typeVariable
     i <- identifier
@@ -98,12 +116,15 @@ functionDefintion = do
     body <- curlies statements
     return (FunctionDefintion i ts t params body)
 
+parameter :: Parser Name
 parameter = liftA2 (flip Name) typeVariable identifier
 
+ifStatement :: Parser Statement
 ifStatement = do
     ifBranch <- ifPart
     elseIfBranches <- many (token "else" *> ifPart)
     elseBranch <- optional (token "else" *> curlies statements)
     return (If (ifBranch:elseIfBranches) elseBranch)
 
+ifPart :: Parser (Expression, [Statement])
 ifPart = token "if" *> liftA2 (,) (parens expr) (curlies statements)
