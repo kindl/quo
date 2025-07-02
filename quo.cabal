@@ -8,7 +8,7 @@ maintainer:         janoschkindl+srht@gmail.com
 build-type:         Simple
 
 common warnings
-    ghc-options: -Wall -fno-warn-missing-signatures
+    ghc-options: -Wall
 
 executable quo
     import:         warnings
