@@ -64,8 +64,13 @@ isPrimitive ty = elem ty [boolType, charType,
     longType, ulongType, floatType, doubleType,
     usizeType]
 
+isPointerType :: Type -> Bool
+isPointerType (PointerType _) = True
+isPointerType _ = False
+
 isStructType :: Type -> Bool
-isStructType ty = not (isPrimitive ty)
+isStructType ty@(Concrete _ _) = not (isPrimitive ty)
+isStructType _ = False
 
 isFunctionType :: Type -> Bool
 isFunctionType (FunctionType _ _) = True

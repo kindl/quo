@@ -402,11 +402,10 @@ createOffset fields fieldName val = do
             return ("%" <> offsetted)
 
 emitStore :: Type -> Val -> Val -> ReaderT Builder IO ()
-emitStore structType val mem =
-    let storeTy = toQbeStoreTy structType
-    in if isPrimitive structType
-        then emit (Store storeTy val mem)
-        else emitStoreFields structType val mem
+emitStore ty val mem =
+    if isPrimitive ty || isPointerType ty
+        then emit (Store (toQbeStoreTy ty) val mem)
+        else emitStoreFields ty val mem
 
 emitStoreFields :: Type -> Val -> Val -> ReaderT Builder IO ()
 emitStoreFields structType val mem = do
@@ -422,10 +421,10 @@ emitStoreField fields val mem (fieldName, fieldType) = do
     emitStore fieldType loadedVal memOffsetVal
 
 emitLoadOrVal :: Type -> Text -> ReaderT Builder IO Text
-emitLoadOrVal fieldType val =
-    if isPrimitive fieldType
+emitLoadOrVal ty val =
+    if isPrimitive ty || isPointerType ty
         -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
-        then emitLoad fieldType val
+        then emitLoad ty val
         -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
         else return val
 
