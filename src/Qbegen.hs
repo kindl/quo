@@ -390,13 +390,6 @@ emitAssignFields structType val expressions = do
     fields <- findFields structType
     zipWithM_ (emitField fields val) fields expressions
 
-isStructQbeTy :: Text -> Bool
-isStructQbeTy = isPrefixOf ":"
-
-isFunctionType :: Type -> Bool
-isFunctionType (FunctionType _ _) = True
-isFunctionType _ = False
-
 createOffset :: TypeLookup -> Text -> Val -> Emit Val
 createOffset fields fieldName val = do
     offset <- getOffset fieldName fields
@@ -411,9 +404,9 @@ createOffset fields fieldName val = do
 emitStore :: Type -> Val -> Val -> ReaderT Builder IO ()
 emitStore structType val mem =
     let storeTy = toQbeStoreTy structType
-    in if isStructQbeTy storeTy
-        then emitStoreFields structType val mem
-        else emit (Store storeTy val mem)
+    in if isPrimitive structType
+        then emit (Store storeTy val mem)
+        else emitStoreFields structType val mem
 
 emitStoreFields :: Type -> Val -> Val -> ReaderT Builder IO ()
 emitStoreFields structType val mem = do
@@ -429,13 +422,12 @@ emitStoreField fields val mem (fieldName, fieldType) = do
     emitStore fieldType loadedVal memOffsetVal
 
 emitLoadOrVal :: Type -> Text -> ReaderT Builder IO Text
-emitLoadOrVal fieldType val = do
-    let qbeTy = toQbeTy fieldType
-    if isStructQbeTy qbeTy || isFunctionType fieldType
-        -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
-        then return val
+emitLoadOrVal fieldType val =
+    if isPrimitive fieldType
         -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
-        else emitLoad fieldType val
+        then emitLoad fieldType val
+        -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
+        else return val
 
 emitLoad :: Type -> Val -> ReaderT Builder IO Text
 emitLoad ty val = do

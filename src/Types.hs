@@ -58,6 +58,19 @@ nullptrType = PointerType (Concrete "void" [])
 usizeType :: Type
 usizeType = Concrete "usize" []
 
+isPrimitive :: Type -> Bool
+isPrimitive ty = elem ty [boolType, charType,
+    shortType, ushortType, intType, uintType,
+    longType, ulongType, floatType, doubleType,
+    usizeType]
+
+isStructType :: Type -> Bool
+isStructType ty = not (isPrimitive ty)
+
+isFunctionType :: Type -> Bool
+isFunctionType (FunctionType _ _) = True
+isFunctionType _ = False
+
 makeFunctionType :: ReturnType -> [Parameter] -> Type
 makeFunctionType returnType parameters =
     FunctionType returnType (fmap (\(Name _ t) -> t) parameters)
