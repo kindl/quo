@@ -3,9 +3,9 @@ module Qbegen(moduleToQbe, prettyMod) where
 
 import Data.Text(Text, pack, isPrefixOf)
 import Types
-import Resolver(StructLookup, TypeLookup, readType, gatherStructs, zipParameters)
+import Resolver(StructLookup, TypeLookup, readType, gatherStructs)
 import Data.IORef(IORef, modifyIORef', newIORef, readIORef)
-import Control.Monad(when)
+import Control.Monad(when, zipWithM_)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
 import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
@@ -118,11 +118,11 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal rightHand
     emitStore ty val ("%" <> name)
-statementToBlock (Definition (Name ident structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
-    emitAlloc ident structType
-    fields <- findFields structType
-    zipParameters (emitField fields ("%" <> ident)) fields expressions
-    return ()
+statementToBlock (Definition (Name name structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
+    -- This special case exists so that assigning new structs does not allocate twice,
+    -- one alloc for the definition and one for the expression
+    emitAlloc name structType
+    emitAssignFields structType ("%" <> name) expressions
 statementToBlock (Definition (Name name ty) expression) = do
     -- The allocation for locals are not emitted here, but per function.
     -- This is necessary so that we do not keep reallocating,
@@ -215,11 +215,6 @@ findFields (PointerType innerTy) =
 findFields ty =
     fail ("Cannot get field of non-struct type " ++ show ty)
 
-getOffsetAsVal :: Text -> TypeLookup -> Emit Text
-getOffsetAsVal name fields = do
-    offset <- getOffset name fields
-    return (pack (show offset))
-
 getOffset :: Text -> TypeLookup -> Emit Int32
 getOffset name [] = fail ("Did not encounter field " ++ show name)
 getOffset name ((fieldName, ty):fields) =
@@ -272,8 +267,11 @@ expressionToVal (Variable (Name name ty) []) = do
         else emitLoadOrVal ty (sigil <> name)
 expressionToVal (Literal l) =
     literalToVal l
-expressionToVal (Apply (Variable n@(Name _ (FunctionType returnType _)) []) expressions) | isConstructor n =
-    emitConstructor returnType expressions
+expressionToVal (Apply (Variable n@(Name _ (FunctionType structType _)) []) expressions) | isConstructor n = do
+    ident <- newIdent ".local"
+    emitAlloc ident structType
+    emitAssignFields structType ("%" <> ident) expressions
+    return ("%" <> ident)
 expressionToVal (Apply (Variable (Name "cast" _) [targetType]) [parameter]) = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
@@ -325,14 +323,11 @@ expressionToVal (SquareAccess expression accessor) = do
 
     emitLoadOrVal elementType ("%" <> offsetVal)
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
-    -- This will hold the offsetted pointer
-    offsetIdent <- newIdent ".local"
     val <- expressionToVal expression
     let structType = readType expression
     fields <- findFields structType
-    offset <- getOffsetAsVal fieldName fields
-    emit (Instruction offsetIdent pointerTy "add" [val, offset])
-    emitLoadOrVal fieldType ("%" <> offsetIdent)
+    offset <- createOffset fields fieldName val
+    emitLoadOrVal fieldType offset
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -369,15 +364,6 @@ emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
--- For generating structs
-emitConstructor :: Type -> [Expression] -> Emit Text
-emitConstructor structType expressions = do
-    ident <- newIdent ".local"
-    emitAlloc ident structType
-    fields <- findFields structType
-    zipParameters (emitField fields ("%" <> ident)) fields expressions
-    return ("%" <> ident)
-
 -- Nested struct creation:
 -- When we have a struct Vector { int x, int y }
 -- and struct Matrix { Vector v, Vector w }
@@ -387,40 +373,49 @@ emitConstructor structType expressions = do
 emitField :: TypeLookup -> Val -> (Text, Type) -> Expression -> Emit ()
 emitField fields var (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
     offsetted <- createOffset fields fieldName var
-    nestedFields <- findFields fieldType
-    zipParameters (emitField nestedFields offsetted) nestedFields expressions
-    return ()
+    emitAssignFields fieldType offsetted expressions
 -- Nested struct copying:
 -- Matrix(Vector2Int(x, y), makeVector2Int(z))
 -- After creating a value, fields are copied one by one
 -- this probably could be reused for assigning structs
+-- TODO there are many special cases for expression to val,
+-- which does not alloc for structs. Maybe these special cases can be collapsed
 emitField fields var (fieldName, fieldType) expression = do
     offsetVal <- createOffset fields fieldName var
     val <- expressionToVal expression
     emitStore fieldType val offsetVal
 
+emitAssignFields :: Type -> Val -> [Expression] -> Emit ()
+emitAssignFields structType val expressions = do
+    fields <- findFields structType
+    zipWithM_ (emitField fields val) fields expressions
+
 isStructQbeTy :: Text -> Bool
 isStructQbeTy = isPrefixOf ":"
 
+isFunctionType :: Type -> Bool
 isFunctionType (FunctionType _ _) = True
 isFunctionType _ = False
 
 createOffset :: TypeLookup -> Text -> Val -> Emit Val
 createOffset fields fieldName val = do
-    offset <- getOffsetAsVal fieldName fields
-    if offset == "0"
+    offset <- getOffset fieldName fields
+    if offset == 0
         then return val
         else do
             offsetted <- newIdent ".local"
-            emit (Instruction offsetted pointerTy "add" [val, offset])
+            let offsetVal = pack (show offset)
+            emit (Instruction offsetted pointerTy "add" [val, offsetVal])
             return ("%" <> offsetted)
 
+emitStore :: Type -> Val -> Val -> ReaderT Builder IO ()
 emitStore structType val mem =
     let storeTy = toQbeStoreTy structType
     in if isStructQbeTy storeTy
         then emitStoreFields structType val mem
         else emit (Store storeTy val mem)
 
+emitStoreFields :: Type -> Val -> Val -> ReaderT Builder IO ()
 emitStoreFields structType val mem = do
     nestedFields <- findFields structType
     traverse_ (emitStoreField nestedFields val mem) nestedFields
@@ -433,6 +428,7 @@ emitStoreField fields val mem (fieldName, fieldType) = do
     loadedVal <- emitLoadOrVal fieldType valOffsetVal
     emitStore fieldType loadedVal memOffsetVal
 
+emitLoadOrVal :: Type -> Text -> ReaderT Builder IO Text
 emitLoadOrVal fieldType val = do
     let qbeTy = toQbeTy fieldType
     if isStructQbeTy qbeTy || isFunctionType fieldType
@@ -441,6 +437,7 @@ emitLoadOrVal fieldType val = do
         -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
         else emitLoad fieldType val
 
+emitLoad :: Type -> Val -> ReaderT Builder IO Text
 emitLoad ty val = do
     let broadQbeTy = toQbeWordTy ty
     let qbeTy = toQbeTy ty

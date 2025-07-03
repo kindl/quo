@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Resolver(StructLookup, TypeLookup, runResolve, literalType, readType,
-    substitute, zipParameters, zipTypeParameters, gatherStructs) where
+    substitute, zipTypeParameters, gatherStructs) where
 
 import Types
 import Control.Applicative(liftA2)
