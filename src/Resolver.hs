@@ -158,6 +158,8 @@ resolveStatement (Switch expression branches) = do
     let conditionType = readType resolvedExpression
     resolvedBranches <- traverse (resolveBranch conditionType) branches
     return (Switch resolvedExpression resolvedBranches)
+resolveStatement BreakStatement = return BreakStatement
+resolveStatement ContinueStatement = return ContinueStatement
 resolveStatement statement =
     fail ("Unexpected definition statement " ++ show statement)
 
