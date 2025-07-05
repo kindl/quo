@@ -123,6 +123,8 @@ data Statement =
     | For Name Expression [Statement]
     | While Expression [Statement]
     | Switch Expression [(Expression, [Statement])]
+    | BreakStatement
+    | ContinueStatement
         deriving (Eq, Show, Data, Typeable)
 
 -- TODO find the best option to model generics
