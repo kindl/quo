@@ -7,7 +7,6 @@ import Prettyprinter.Render.Text(renderStrict)
 import Types(Name(Name), Type(Concrete, FunctionType))
 
 
--- TODO check if \0 escape character works in QBE
 escape :: Text -> Text
 escape = replace "\0" "\\0"
     . replace "\n" "\\n"
