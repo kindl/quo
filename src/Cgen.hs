@@ -39,6 +39,8 @@ statementToC (If (cond:conds) (Just th)) =
     printIf cond conds <//> printElsePart th
 statementToC (While cond sts) = "while" <+> parens (expressionToC cond)
     <//> printBlock sts
+statementToC BreakStatement = "break;"
+statementToC ContinueStatement = "continue;"
 statementToC other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
 
 printIf :: (Expression, [Statement]) -> [(Expression, [Statement])] -> Doc ann
@@ -117,6 +119,8 @@ parensWrapped e =
 
 typeToC :: Type -> Doc a
 typeToC (PointerType t) = typeToC t <> "*"
+typeToC (FunctionType returnType parameterTypes) =
+    typeToC returnType <+> parens "*" <> parens (intercalate ", " (fmap typeToC parameterTypes))
 typeToC (Concrete "void" []) = "void"
 typeToC (Concrete "bool" []) = "bool"
 typeToC (Concrete "char" []) = "char"
