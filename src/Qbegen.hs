@@ -17,6 +17,8 @@ import Helpers((<//>), find, indent, fromText, intercalate, escape, isConstructo
 -- Ident does not contain a sigil, while Val does
 type Ident = Text
 
+type Label = Ident
+
 type Val = Text
 
 type Ty = Text
@@ -28,7 +30,7 @@ data Block =
     | CallInstruction Ident Ty Val [(Ty, Val)]
     | Store Ty Val Val
     | Label Ident
-    | Jump Ident
+    | Jump Label
     | JumpNonZero Val Ident Ident
     | Ret (Maybe Val)
 
@@ -37,7 +39,7 @@ data Def =
     | TypeDef Ident [Ty]
     | FuncDef Ty Ident [(Ty, Ident)] [Block]
 
-data Builder = Builder {
+data EmitEnv = EmitEnv {
     -- List of global names and parameter names for determining sigil
     getGlobals :: [Text],
     getParameters :: [Text],
@@ -46,10 +48,12 @@ data Builder = Builder {
     getStructs :: StructLookup,
     -- Per function
     getAllocs :: IORef [Block],
-    getInstructions :: IORef [Block]
+    getInstructions :: IORef [Block],
+    -- Per while block
+    getLoopLabels :: Maybe (Label, Label)
 }
 
-type Emit a = ReaderT Builder IO a
+type Emit a = ReaderT EmitEnv IO a
 
 newUnique :: Emit Int
 newUnique = do
@@ -73,14 +77,17 @@ emitAlloc name ty = do
 
 withParameters :: [Text] -> Emit a -> Emit a
 withParameters params action =
-    local (\(Builder globals _ uniques stringDefs structs instructions allocs) ->
-        Builder globals params uniques stringDefs structs instructions allocs) action
+    local (\emitEnv -> emitEnv { getParameters = params }) action
 
-withFreshBuilder :: Emit () -> Emit [Block]
-withFreshBuilder action = do
+withLoopLabels :: (Label, Label) -> Emit a -> Emit a
+withLoopLabels loopLabels =
+    local (\emitEnv -> emitEnv { getLoopLabels = Just loopLabels })
+
+withFreshEmitEnv :: Emit () -> Emit [Block]
+withFreshEmitEnv action = do
     allocs <- lift (newIORef [])
     instructions <- lift (newIORef [])
-    local (\(Builder params globals uniques stringDefs structs _ _) -> Builder params globals uniques stringDefs structs allocs instructions) action
+    local (\emitEnv -> emitEnv { getAllocs = allocs, getInstructions = instructions}) action
     a <- lift (readIORef allocs)
     i <- lift (readIORef instructions)
     return (a ++ i)
@@ -148,18 +155,26 @@ statementToBlock (While condition statements) = do
     loopLabel <- newLabel "loop"
     breakLabel <- newLabel "break"
 
-    -- CONSIDER passing the continue and break label
-    -- for implementing break and continue statements
     emit (Label continueLabel)
     val <- expressionToVal condition
     emit (JumpNonZero val loopLabel breakLabel)
     emit (Label loopLabel)
-    toBlock statements
+    withLoopLabels (breakLabel, continueLabel) (toBlock statements)
     emit (Jump continueLabel)
     emit (Label breakLabel)
+statementToBlock BreakStatement = do
+    maybeLabels <- asks getLoopLabels
+    case maybeLabels of
+        Nothing -> fail "Cannot use break outside loops"
+        Just (breakLabel, _) -> emit (Jump breakLabel)
+statementToBlock ContinueStatement = do
+    maybeLabels <- asks getLoopLabels
+    case maybeLabels of
+        Nothing -> fail "Cannot use continue outside loops"
+        Just (_, continueLabel) -> emit (Jump continueLabel)
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
-emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> ReaderT Builder IO ()
+emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> ReaderT EmitEnv IO ()
 emitBranches endLabel [] maybeElseBranch = do
     toBlock (concat maybeElseBranch)
     emit (Label endLabel)
@@ -171,9 +186,9 @@ emitBranches endLabel ((condition, statements):rest) maybeElseBranch = do
     emit (JumpNonZero val thenLabel elseLabel)
     emit (Label thenLabel)
     toBlock statements
-    -- Only emit a jump if there is no ret
+    -- Only emit a jump if there is no ret/jmp
     -- It is a syntax error to have a jmp after a ret.
-    if not (null statements) && isReturn (last statements)
+    if not (null statements) && isJumpStatement (last statements)
         then return ()
         else emit (Jump endLabel)
 
@@ -401,13 +416,13 @@ createOffset fields fieldName val = do
             emit (Instruction offsetted pointerTy "add" [val, offsetVal])
             return ("%" <> offsetted)
 
-emitStore :: Type -> Val -> Val -> ReaderT Builder IO ()
+emitStore :: Type -> Val -> Val -> ReaderT EmitEnv IO ()
 emitStore ty val mem =
     if isPrimitive ty || isPointerType ty
         then emit (Store (toQbeStoreTy ty) val mem)
         else emitStoreFields ty val mem
 
-emitStoreFields :: Type -> Val -> Val -> ReaderT Builder IO ()
+emitStoreFields :: Type -> Val -> Val -> ReaderT EmitEnv IO ()
 emitStoreFields structType val mem = do
     nestedFields <- findFields structType
     traverse_ (emitStoreField nestedFields val mem) nestedFields
@@ -420,7 +435,7 @@ emitStoreField fields val mem (fieldName, fieldType) = do
     loadedVal <- emitLoadOrVal fieldType valOffsetVal
     emitStore fieldType loadedVal memOffsetVal
 
-emitLoadOrVal :: Type -> Text -> ReaderT Builder IO Text
+emitLoadOrVal :: Type -> Text -> ReaderT EmitEnv IO Text
 emitLoadOrVal ty val =
     if isPrimitive ty || isPointerType ty
         -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
@@ -428,7 +443,7 @@ emitLoadOrVal ty val =
         -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
         else return val
 
-emitLoad :: Type -> Val -> ReaderT Builder IO Text
+emitLoad :: Type -> Val -> ReaderT EmitEnv IO Text
 emitLoad ty val = do
     let broadQbeTy = toQbeWordTy ty
     let qbeTy = toQbeTy ty
@@ -603,9 +618,9 @@ moduleToQbe (Module name statements) = do
     allocs <- newIORef []
     let globalNames = gatherGlobalNames statements
     let structs = gatherStructs statements
-    let baseBuilder = Builder globalNames [] uniques stringDefs structs instructions allocs
+    let baseEmitEnv = EmitEnv globalNames [] uniques stringDefs structs instructions allocs Nothing
     let typeDefs = foldMap structToDef statements
-    defs <- runReaderT (traverse statementToDef statements) baseBuilder
+    defs <- runReaderT (traverse statementToDef statements) baseEmitEnv
     createdStringDefs <- readIORef stringDefs
     return (Mod name (typeDefs ++ createdStringDefs ++ concat defs))
 
@@ -617,7 +632,7 @@ statementToDef (Definition (Name name ty) (Literal l)) = do
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
     let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
     let returnType = toQbeTy ty
-    blocks <- withFreshBuilder (bodyToBlock (fmap snd qbeParams) statements)
+    blocks <- withFreshEmitEnv (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing blocks
     return [FuncDef returnType name qbeParams blocks']
@@ -644,9 +659,11 @@ isRet :: Block -> Bool
 isRet (Ret _) = True
 isRet _ = False
 
-isReturn :: Statement -> Bool
-isReturn (Return _) = True
-isReturn _ = False
+isJumpStatement :: Statement -> Bool
+isJumpStatement (Return _) = True
+isJumpStatement BreakStatement = True
+isJumpStatement ContinueStatement = True
+isJumpStatement _ = False
 
 structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
