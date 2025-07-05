@@ -172,7 +172,7 @@ specials = punctuation ++ operators ++ brackets
 keywords :: [Text]
 keywords = ["fn", "if", "else", "return", "let", "true", "false",
     "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto",
-    "module", "import"]
+    "module", "import", "break", "continue"]
 
 punctuation :: [Text]
 punctuation = [".", ";", ",", "=>"]

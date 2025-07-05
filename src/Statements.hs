@@ -27,6 +27,8 @@ statements = many (functionDefintion
     <|> structDefinition
     <|> returnStatement
     <|> forStatement
+    <|> breakStatement
+    <|> continueStatement
     <|> whileStatement)
 
 assignmentStatement :: Parser Statement
@@ -61,6 +63,18 @@ forStatement = do
     (i, t, e) <- parens forPart
     body <- curlies statements
     return (For (Name i t) e body)
+
+continueStatement :: Parser Statement
+continueStatement = do
+    _ <- token "continue"
+    _ <- token ";"
+    return ContinueStatement 
+
+breakStatement :: Parser Statement
+breakStatement = do
+    _ <- token "break"
+    _ <- token ";"
+    return BreakStatement 
 
 whileStatement :: Parser Statement
 whileStatement = do
