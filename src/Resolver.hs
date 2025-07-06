@@ -149,10 +149,10 @@ resolveStatement (If branches elseBranch) = do
 resolveStatement (While condition statements) =
     liftA2 While (resolveExpression condition boolType) (resolveStatements statements)
 resolveStatement (For (Name name annotatedType) expression statements) = do
-    resolvedExpression <- resolveExpression expression annotatedType
-    let newType = readType resolvedExpression
-    resolvedStatements <- with (entry name newType) (resolveStatements statements)
-    return (For (Name name newType) resolvedExpression resolvedStatements)
+    resolvedExpression <- resolveExpression expression (ArrayType annotatedType Nothing)
+    let (ArrayType elementType _) = readType resolvedExpression
+    resolvedStatements <- with (entry name elementType) (resolveStatements statements)
+    return (For (Name name elementType) resolvedExpression resolvedStatements)
 resolveStatement (Switch expression branches) = do
     resolvedExpression <- resolveExpression expression auto
     let conditionType = readType resolvedExpression
