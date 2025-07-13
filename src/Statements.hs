@@ -68,13 +68,13 @@ continueStatement :: Parser Statement
 continueStatement = do
     _ <- token "continue"
     _ <- token ";"
-    return ContinueStatement 
+    return ContinueStatement
 
 breakStatement :: Parser Statement
 breakStatement = do
     _ <- token "break"
     _ <- token ";"
-    return BreakStatement 
+    return BreakStatement
 
 whileStatement :: Parser Statement
 whileStatement = do
