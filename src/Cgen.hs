@@ -62,10 +62,13 @@ printBlock sts = "{"
     <//> indent (intercalate "\n" (fmap statementToC sts))
     <//> "}"
 
--- Array size specifier come after the identifier in C
+-- We mostly have to convert the type together with the name because
+-- for example array size specifier come after the identifier in C:
+-- int numbers[3]; instead of int[3] numbers;
 nameToC :: Name -> Doc ann
 nameToC (Name name (ArrayType ty maybeSize)) =
-    typeToC ty <+> fromText name <> (case maybeSize of
+    -- Call recursively to handle array of arrays
+    nameToC (Name name ty) <> (case maybeSize of
         Nothing -> "[]"
         Just size -> "[" <> fromText (pack (show size)) <> "]")
 nameToC (Name name (FunctionType returnType parameterTypes)) =
