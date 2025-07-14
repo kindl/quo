@@ -35,7 +35,7 @@ data Block =
     | Ret (Maybe Val)
 
 data Def =
-    DataDef Ident [(Ty, Val)]
+    DataDef Ident [(Ty, [Val])]
     | TypeDef Ident [Ty]
     | FuncDef Ty Ident [(Ty, Ident)] [Block]
 
@@ -54,6 +54,8 @@ data EmitEnv = EmitEnv {
 }
 
 type Emit a = ReaderT EmitEnv IO a
+
+numberToVal = pack . show
 
 newUnique :: Emit Int
 newUnique = do
@@ -117,6 +119,8 @@ statementToBlock (Return (Just val)) = do
     emit (Ret (Just returnVal))
 statementToBlock (Call expression) =
     expressionToVal expression >> return ()
+statementToBlock (Definition name expression) =
+    definitionToBlocks name expression
 statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     -- TODO handling complex leftHand expressions
     wasParam <- isParam name
@@ -124,18 +128,6 @@ statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
     wasGlobal <- isGlobal name
     when wasGlobal (fail ("Global " ++ show name ++ " is constant and cannot be reassigned"))
     val <- expressionToVal rightHand
-    emitStore ty val ("%" <> name)
-statementToBlock (Definition (Name name structType) (Apply (Variable constructor []) expressions)) | isConstructor constructor = do
-    -- This special case exists so that assigning new structs does not allocate twice,
-    -- one alloc for the definition and one for the expression
-    emitAlloc name structType
-    emitAssignFields structType ("%" <> name) expressions
-statementToBlock (Definition (Name name ty) expression) = do
-    -- The allocation for locals are not emitted here, but per function.
-    -- This is necessary so that we do not keep reallocating,
-    -- for example in a while-loop
-    emitAlloc name ty
-    val <- expressionToVal expression
     emitStore ty val ("%" <> name)
 statementToBlock (If branches maybeElseBranch) = do
     endLabel <- newLabel "end"
@@ -174,6 +166,22 @@ statementToBlock ContinueStatement = do
         Just (_, continueLabel) -> emit (Jump continueLabel)
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
+definitionToBlocks (Name name structType) (Apply (Variable constructor []) expressions) | isConstructor constructor = do
+    -- This special case exists so that assigning new structs does not allocate twice,
+    -- one alloc for the definition and one for the expression
+    emitAlloc name structType
+    emitAssignFields structType ("%" <> name) expressions
+definitionToBlocks (Name name (ArrayType elementType _)) (ArrayExpression expressions) = do
+    emitAlloc name (ArrayType elementType (Just (fromIntegral (length expressions))))
+    emitAssignElements elementType ("%" <> name) expressions
+definitionToBlocks (Name name ty) expression = do
+    -- The allocation for locals are not emitted here, but per function.
+    -- This is necessary so that we do not keep reallocating,
+    -- for example in a while-loop
+    emitAlloc name ty
+    val <- expressionToVal expression
+    emitStore ty val ("%" <> name)
+
 emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> ReaderT EmitEnv IO ()
 emitBranches endLabel [] maybeElseBranch = do
     toBlock (concat maybeElseBranch)
@@ -195,12 +203,14 @@ emitBranches endLabel ((condition, statements):rest) maybeElseBranch = do
     emit (Label elseLabel)
     emitBranches endLabel rest maybeElseBranch
 
-getSizeAsVal :: Type -> Emit Text
+getSizeAsVal :: Type -> Emit Val
 getSizeAsVal ty = do
     structEnv <- asks getStructs
     let size = getSize structEnv ty
-    return (pack (show size))
+    return (numberToVal size)
 
+-- This does not produce a val,
+-- it is necessary for instruction names alloc4 alloc8 etc.
 getAlignmentAsText :: Type -> Text
 getAlignmentAsText ty = pack (show (getAlignment ty))
 
@@ -230,16 +240,32 @@ findFields (PointerType innerTy) =
 findFields ty =
     fail ("Cannot get field of non-struct type " ++ show ty)
 
-getOffset :: Text -> TypeLookup -> Emit Int32
-getOffset name [] = fail ("Did not encounter field " ++ show name)
-getOffset name ((fieldName, ty):fields) =
+getOffset structType name = do
+    structEnv <- asks getStructs
+    fields <- findFields structType
+    return (getOffset' structEnv name fields)
+
+getOffset' _ name [] = error ("Did not encounter field " ++ show name)
+getOffset' structEnv name ((fieldName, ty):fields) =
     if name == fieldName
-        then return 0
-        else do
-            structEnv <- asks getStructs
-            let s = getSize structEnv ty
-            o <- getOffset name fields
-            return (s + o)
+        then 0
+        else
+            let
+                s = getSize structEnv ty
+                o = getOffset' structEnv name fields
+            in (s + o)
+
+annotateOffsets ty = do
+    fields <- findFields ty
+    structEnv <- asks getStructs
+    return (annotateOffsets' structEnv 0 fields)
+
+annotateOffsets' _ _ [] = []
+annotateOffsets' structEnv current ((fieldName, ty):fields) =
+    let
+        s = getSize structEnv ty
+        rest = annotateOffsets' structEnv (current + s) fields
+    in ((fieldName, (ty, current)):rest)
 
 pointerSize :: Int32
 pointerSize = 8
@@ -340,9 +366,9 @@ expressionToVal (SquareAccess expression accessor) = do
 expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     val <- expressionToVal expression
     let structType = readType expression
-    fields <- findFields structType
-    offset <- createOffset fields fieldName val
-    emitLoadOrVal fieldType offset
+    offset <- getOffset structType fieldName
+    offsetVal <- createOffsetVal offset val
+    emitLoadOrVal fieldType offsetVal
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -379,35 +405,45 @@ emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
+emitAssignExpression :: Val -> Type -> Expression -> Emit ()
 -- Nested struct creation:
 -- When we have a struct Vector { int x, int y }
 -- and struct Matrix { Vector v, Vector w }
 -- and build it with Matrix(Vector(1, 2), Vector(3, 4))
 -- then we don't want to allocate the Vectors, we just want to allocate Matrix
 -- and assign the individual ints.
-emitField :: TypeLookup -> Val -> (Text, Type) -> Expression -> Emit ()
-emitField fields var (fieldName, fieldType) (Apply (Variable name []) expressions) | isConstructor name = do
-    offsetted <- createOffset fields fieldName var
-    emitAssignFields fieldType offsetted expressions
+emitAssignExpression targetVal fieldType (Apply (Variable name []) expressions) | isConstructor name = do
+    emitAssignFields fieldType targetVal expressions
 -- Nested struct copying:
 -- Matrix(Vector2Int(x, y), makeVector2Int(z))
 -- After creating a value, fields are copied one by one
 -- this probably could be reused for assigning structs
 -- TODO there are many special cases for expression to val,
 -- which does not alloc for structs. Maybe these special cases can be collapsed
-emitField fields var (fieldName, fieldType) expression = do
-    offsetVal <- createOffset fields fieldName var
+emitAssignExpression targetVal fieldType expression = do
     val <- expressionToVal expression
-    emitStore fieldType val offsetVal
+    emitStore fieldType val targetVal
+
+emitAssignElements :: Type -> Val -> [Expression] -> Emit ()
+emitAssignElements elementType target expressions = do
+    let numbers = [0 .. fromIntegral (length expressions)]
+    structEnv <- asks getStructs
+    let elementSize = getSize structEnv elementType
+    let pairs = fmap (\index -> (elementType, index * elementSize)) numbers
+    zipWithM_ (emitAssignAux target) pairs expressions
 
 emitAssignFields :: Type -> Val -> [Expression] -> Emit ()
-emitAssignFields structType val expressions = do
-    fields <- findFields structType
-    zipWithM_ (emitField fields val) fields expressions
+emitAssignFields structType target expressions = do
+    annotated <- annotateOffsets structType
+    let pairs = fmap snd annotated
+    zipWithM_ (emitAssignAux target) pairs expressions
 
-createOffset :: TypeLookup -> Text -> Val -> Emit Val
-createOffset fields fieldName val = do
-    offset <- getOffset fieldName fields
+emitAssignAux target (ty, off) expression = do
+    offsetVal <- createOffsetVal off target
+    emitAssignExpression offsetVal ty expression
+
+createOffsetVal :: Int32 -> Text -> ReaderT EmitEnv IO Text
+createOffsetVal offset val = do
     if offset == 0
         then return val
         else do
@@ -424,14 +460,14 @@ emitStore ty val mem =
 
 emitStoreFields :: Type -> Val -> Val -> ReaderT EmitEnv IO ()
 emitStoreFields structType val mem = do
-    nestedFields <- findFields structType
-    traverse_ (emitStoreField nestedFields val mem) nestedFields
+    annotated <- annotateOffsets structType
+    let pairs = fmap snd annotated
+    traverse_ (emitStoreFieldsAux val mem) pairs
 
--- case for struct1.x = struct2.x
-emitStoreField :: TypeLookup -> Val -> Val -> (Text, Type) -> Emit ()
-emitStoreField fields val mem (fieldName, fieldType) = do
-    valOffsetVal <- createOffset fields fieldName val
-    memOffsetVal <- createOffset fields fieldName mem
+emitStoreFieldsAux :: Val -> Val -> (Type, Int32) -> Emit ()
+emitStoreFieldsAux val mem (fieldType, offset) = do
+    valOffsetVal <- createOffsetVal offset val
+    memOffsetVal <- createOffsetVal offset mem
     loadedVal <- emitLoadOrVal fieldType valOffsetVal
     emitStore fieldType loadedVal memOffsetVal
 
@@ -605,9 +641,12 @@ registerConstant :: Text -> Emit Text
 registerConstant str = do
     freshName <- newIdent "string"
     ref <- asks getStringLiterals
-    let escaped = "\"" <> escape str <> "\\0\""
-    lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", escaped)]]))
+    let escaped = toEscapedNullString str
+    lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", [escaped])]]))
     return ("$" <> freshName)
+
+toEscapedNullString str =
+    "\"" <> escape str <> "\\0\""
 
 -- Pretty Printing to Qbe format
 moduleToQbe :: Module -> IO Mod
@@ -626,9 +665,9 @@ moduleToQbe (Module name statements) = do
 
 -- Top level
 statementToDef :: Statement -> Emit [Def]
-statementToDef (Definition (Name name ty) (Literal l)) = do
-    val <- literalToVal l
-    return [DataDef name [(toQbeStoreTy ty, val)]]
+statementToDef (Definition (Name name _) e) =
+    let items = expressionToData e
+    in return [DataDef name items]
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
     let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
     let returnType = toQbeTy ty
@@ -636,7 +675,21 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing blocks
     return [FuncDef returnType name qbeParams blocks']
-statementToDef _ = return []
+statementToDef (ExternDefintion _ _ _) = return []
+statementToDef (StructDefinition _ _ _) = return []
+statementToDef s =
+    fail ("Unexpected statement at top level " ++ show s)
+
+-- TODO handle expressions
+expressionToData :: Expression -> [(Ty, [Val])]
+expressionToData (Literal (StringLiteral str)) =
+    [("b", [toEscapedNullString str])]
+expressionToData e@(Literal l) =
+    let item = literalToText l
+    in [(toQbeStoreTy (readType e), [item])]
+-- TODO constructors, create array as w 1 2 3 instead of w 1, w 2, w 3
+expressionToData (ArrayExpression es) =
+    foldMap expressionToData es
 
 -- TODO solve problem with void functions
 -- Following function:
@@ -693,8 +746,8 @@ prettyParam :: (Ty, Val) -> Doc a
 prettyParam (ty, val) = prettyTy ty <+> prettyVal val
 
 -- For data definitions
-prettyData :: (Ty, Val) -> Doc a
-prettyData = prettyParam
+prettyData :: (Ty, [Val]) -> Doc a
+prettyData (ty, vals) = prettyTy ty <+> intercalate " " (fmap prettyVal vals)
 
 prettyTy :: Ty -> Doc a
 prettyTy ty = fromText ty
@@ -710,9 +763,9 @@ prettyDef (FuncDef ty ident parameters block) =
     <//> "@start"
     <//> intercalate "\n" (fmap prettyBlock block)
     <//> "}"
-prettyDef (DataDef ident fields) =
+prettyDef (DataDef ident items) =
     "export data" <+> "$" <> fromText ident <+> "=" <+> "{"
-        <> intercalate ", " (fmap prettyData fields)
+        <> intercalate ", " (fmap prettyData items)
         <> "}"
 prettyDef (TypeDef ident fields) =
     "type" <+> ":" <> fromText ident <+> "=" <+> "{"
