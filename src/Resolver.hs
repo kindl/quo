@@ -332,4 +332,4 @@ findFields (Concrete structName []) = do
 findFields (PointerType innerTy) =
     findFields innerTy
 findFields ty =
-    fail ("Cannot get field of non-struct type " ++ show ty)
+    fail ("Resolver: Cannot get field of non-struct type " ++ show ty)

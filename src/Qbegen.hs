@@ -233,19 +233,20 @@ getAlignment (PointerType _) = 8
 getAlignment _ = 4
 --getAlignment other = error ("Cannot get alignment of " ++ show other)
 
-findFields :: Type -> Emit TypeLookup
-findFields (Concrete structName []) = do
-    structEnv <- asks getStructs
-    find structName structEnv
-findFields (PointerType innerTy) =
-    findFields innerTy
-findFields ty =
-    fail ("Cannot get field of non-struct type " ++ show ty)
+findFields :: StructLookup -> Type -> TypeLookup
+findFields structEnv (Concrete structName []) =
+    case lookup structName structEnv of
+        Nothing -> error ("Qbegen: Cannot get fields of struct " ++ show structName)
+        Just fields -> fields
+findFields structEnv (PointerType innerTy) =
+    findFields structEnv innerTy
+findFields _ ty =
+    error ("Qbegen: Cannot get field of non-struct type " ++ show ty)
 
 getOffset :: Type -> Text -> Emit Int32
 getOffset structType name = do
     structEnv <- asks getStructs
-    fields <- findFields structType
+    let fields = findFields structEnv structType
     return (getOffset' structEnv name fields)
 
 getOffset' :: [(Text, TypeLookup)] -> Text -> [(Text, Type)] -> Int32
@@ -261,8 +262,8 @@ getOffset' structEnv name ((fieldName, ty):fields) =
 
 annotateOffsets :: Type -> Emit [(Text, (Type, Int32))]
 annotateOffsets ty = do
-    fields <- findFields ty
     structEnv <- asks getStructs
+    let fields = findFields structEnv ty
     return (annotateOffsets' structEnv 0 fields)
 
 annotateOffsets' :: [(Text, TypeLookup)] -> Int32 -> [(a, Type)] -> [(a, (Type, Int32))]
@@ -422,8 +423,10 @@ emitAssignExpression :: Val -> Type -> Expression -> Emit ()
 -- and build it with Matrix(Vector(1, 2), Vector(3, 4))
 -- then we don't want to allocate the Vectors, we just want to allocate Matrix
 -- and assign the individual ints.
-emitAssignExpression targetVal fieldType (Apply (Variable name []) expressions) | isConstructor name = do
+emitAssignExpression targetVal fieldType (Apply (Variable name []) expressions) | isConstructor name =
     emitAssignFields fieldType targetVal expressions
+emitAssignExpression targetVal (ArrayType elementType _) (ArrayExpression expressions) =
+    emitAssignElements elementType targetVal expressions
 -- Nested struct copying:
 -- Matrix(Vector2Int(x, y), makeVector2Int(z))
 -- After creating a value, fields are copied one by one
@@ -432,6 +435,7 @@ emitAssignExpression targetVal fieldType (Apply (Variable name []) expressions) 
 -- which does not alloc for structs. Maybe these special cases can be collapsed
 emitAssignExpression targetVal fieldType expression = do
     val <- expressionToVal expression
+    -- TODO handle strings
     emitStore fieldType val targetVal
 
 emitAssignElements :: Type -> Val -> [Expression] -> Emit ()
