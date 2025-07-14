@@ -31,7 +31,7 @@ data Block =
     | Store Ty Val Val
     | Label Ident
     | Jump Label
-    | JumpNonZero Val Ident Ident
+    | JumpNonZero Val Label Label
     | Ret (Maybe Val)
 
 data Def =
@@ -55,6 +55,7 @@ data EmitEnv = EmitEnv {
 
 type Emit a = ReaderT EmitEnv IO a
 
+numberToVal :: Int32 -> Val
 numberToVal = pack . show
 
 newUnique :: Emit Int
@@ -166,6 +167,7 @@ statementToBlock ContinueStatement = do
         Just (_, continueLabel) -> emit (Jump continueLabel)
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
+definitionToBlocks :: Name -> Expression -> Emit ()
 definitionToBlocks (Name name structType) (Apply (Variable constructor []) expressions) | isConstructor constructor = do
     -- This special case exists so that assigning new structs does not allocate twice,
     -- one alloc for the definition and one for the expression
@@ -182,7 +184,7 @@ definitionToBlocks (Name name ty) expression = do
     val <- expressionToVal expression
     emitStore ty val ("%" <> name)
 
-emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> ReaderT EmitEnv IO ()
+emitBranches :: Ident -> [(Expression, [Statement])] -> Maybe [Statement] -> Emit ()
 emitBranches endLabel [] maybeElseBranch = do
     toBlock (concat maybeElseBranch)
     emit (Label endLabel)
@@ -240,11 +242,13 @@ findFields (PointerType innerTy) =
 findFields ty =
     fail ("Cannot get field of non-struct type " ++ show ty)
 
+getOffset :: Type -> Text -> Emit Int32
 getOffset structType name = do
     structEnv <- asks getStructs
     fields <- findFields structType
     return (getOffset' structEnv name fields)
 
+getOffset' :: [(Text, TypeLookup)] -> Text -> [(Text, Type)] -> Int32
 getOffset' _ name [] = error ("Did not encounter field " ++ show name)
 getOffset' structEnv name ((fieldName, ty):fields) =
     if name == fieldName
@@ -255,11 +259,13 @@ getOffset' structEnv name ((fieldName, ty):fields) =
                 o = getOffset' structEnv name fields
             in (s + o)
 
+annotateOffsets :: Type -> Emit [(Text, (Type, Int32))]
 annotateOffsets ty = do
     fields <- findFields ty
     structEnv <- asks getStructs
     return (annotateOffsets' structEnv 0 fields)
 
+annotateOffsets' :: [(Text, TypeLookup)] -> Int32 -> [(a, Type)] -> [(a, (Type, Int32))]
 annotateOffsets' _ _ [] = []
 annotateOffsets' structEnv current ((fieldName, ty):fields) =
     let
@@ -308,44 +314,8 @@ expressionToVal (Variable (Name name ty) []) = do
         else emitLoadOrVal ty (sigil <> name)
 expressionToVal (Literal l) =
     literalToVal l
-expressionToVal (Apply (Variable n@(Name _ (FunctionType structType _)) []) expressions) | isConstructor n = do
-    ident <- newIdent ".local"
-    emitAlloc ident structType
-    emitAssignFields structType ("%" <> ident) expressions
-    return ("%" <> ident)
-expressionToVal (Apply (Variable (Name "cast" _) [targetType]) [parameter]) = do
-    let parameterType = readType parameter
-    val <- expressionToVal parameter
-    emitCast parameterType targetType val
-expressionToVal (Apply (Variable (Name "sizeof" (FunctionType _ _)) [typeParameter]) _) =
-    getSizeAsVal typeParameter
-expressionToVal (Apply (Variable (Name name (FunctionType returnType parameterTypes)) []) expressions) = do
-    freshIdent <- newIdent ".local"
-    vals <- traverse expressionToVal expressions
-    let retTy = toQbeWordTy returnType
-    let parameterTys = fmap toQbeTy parameterTypes
-    let zipped = zip parameterTys vals
-    if isOperator name
-        then emitOperator freshIdent retTy name zipped
-        else do
-            wasGlobal <- isGlobal name
-            let sigil = if wasGlobal then "$" else "%"
-            emit (CallInstruction freshIdent retTy (sigil <> name) zipped)
-    return ("%" <> freshIdent)
--- TODO Should the following case be allowed? For example for currying?
--- Probably not very interesting without closuses, but possible
--- getCompare(compareOption)(a, b)
-expressionToVal (Apply expression expressions) = do
-    freshIdent <- newIdent ".local"
-    val <- expressionToVal expression
-    vals <- traverse expressionToVal expressions
-    when (not (isPrefixOf "$" val)) (fail ("Is not a global function " ++ show val))
-    let (FunctionType returnType parameterTypes) = readType expression
-    let retTy = toQbeWordTy returnType
-    let parameterTys = fmap toQbeTy parameterTypes
-    let zipped = zip parameterTys vals
-    emit (CallInstruction freshIdent retTy val zipped)
-    return ("%" <> freshIdent)
+expressionToVal (Apply expression expressions) =
+    emitApply expression expressions
 expressionToVal (SquareAccess expression accessor) = do
     -- This will hold the accessor converted to size
     extVal <- newIdent ".local"
@@ -369,6 +339,46 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offset <- getOffset structType fieldName
     offsetVal <- createOffsetVal offset val
     emitLoadOrVal fieldType offsetVal
+
+emitApply (Variable (Name "cast" _) [targetType]) [parameter] = do
+    let parameterType = readType parameter
+    val <- expressionToVal parameter
+    emitCast parameterType targetType val
+emitApply (Variable (Name "sizeof" (FunctionType _ _)) [typeParameter]) _ =
+    getSizeAsVal typeParameter
+emitApply (Variable n@(Name _ (FunctionType structType _)) []) expressions | isConstructor n = do
+    ident <- newIdent ".local"
+    emitAlloc ident structType
+    emitAssignFields structType ("%" <> ident) expressions
+    return ("%" <> ident)
+-- TODO try to combine the following cases if possible
+emitApply (Variable (Name name (FunctionType returnType parameterTypes)) []) expressions = do
+    freshIdent <- newIdent ".local"
+    vals <- traverse expressionToVal expressions
+    let retTy = toQbeWordTy returnType
+    let parameterTys = fmap toQbeTy parameterTypes
+    let zipped = zip parameterTys vals
+    if isOperator name
+        then emitOperator freshIdent retTy name zipped
+        else do
+            wasGlobal <- isGlobal name
+            let sigil = if wasGlobal then "$" else "%"
+            emit (CallInstruction freshIdent retTy (sigil <> name) zipped)
+    return ("%" <> freshIdent)
+-- TODO Should the following case be allowed? For example for currying?
+-- Probably not very interesting without closuses, but possible
+-- getCompare(compareOption)(a, b)
+emitApply expression expressions = do
+    freshIdent <- newIdent ".local"
+    val <- expressionToVal expression
+    vals <- traverse expressionToVal expressions
+    when (not (isPrefixOf "$" val)) (fail ("Is not a global function " ++ show val))
+    let (FunctionType returnType parameterTypes) = readType expression
+    let retTy = toQbeWordTy returnType
+    let parameterTys = fmap toQbeTy parameterTypes
+    let zipped = zip parameterTys vals
+    emit (CallInstruction freshIdent retTy val zipped)
+    return ("%" <> freshIdent)
 
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
@@ -442,7 +452,7 @@ emitAssignAux target (ty, off) expression = do
     offsetVal <- createOffsetVal off target
     emitAssignExpression offsetVal ty expression
 
-createOffsetVal :: Int32 -> Text -> ReaderT EmitEnv IO Text
+createOffsetVal :: Int32 -> Text -> Emit Text
 createOffsetVal offset val = do
     if offset == 0
         then return val
@@ -452,13 +462,13 @@ createOffsetVal offset val = do
             emit (Instruction offsetted pointerTy "add" [val, offsetVal])
             return ("%" <> offsetted)
 
-emitStore :: Type -> Val -> Val -> ReaderT EmitEnv IO ()
+emitStore :: Type -> Val -> Val -> Emit ()
 emitStore ty val mem =
     if isPrimitive ty || isPointerType ty
         then emit (Store (toQbeStoreTy ty) val mem)
         else emitStoreFields ty val mem
 
-emitStoreFields :: Type -> Val -> Val -> ReaderT EmitEnv IO ()
+emitStoreFields :: Type -> Val -> Val -> Emit ()
 emitStoreFields structType val mem = do
     annotated <- annotateOffsets structType
     let pairs = fmap snd annotated
@@ -471,7 +481,7 @@ emitStoreFieldsAux val mem (fieldType, offset) = do
     loadedVal <- emitLoadOrVal fieldType valOffsetVal
     emitStore fieldType loadedVal memOffsetVal
 
-emitLoadOrVal :: Type -> Text -> ReaderT EmitEnv IO Text
+emitLoadOrVal :: Type -> Text -> Emit Text
 emitLoadOrVal ty val =
     if isPrimitive ty || isPointerType ty
         -- when accessing an int[] a with a[1] the result will be an int and loaded into a temporary
@@ -479,7 +489,7 @@ emitLoadOrVal ty val =
         -- when accessing some someStruct[] a with a[1] the result will be a pointer to the struct, no load neccessary
         else return val
 
-emitLoad :: Type -> Val -> ReaderT EmitEnv IO Text
+emitLoad :: Type -> Val -> Emit Text
 emitLoad ty val = do
     let broadQbeTy = toQbeWordTy ty
     let qbeTy = toQbeTy ty
@@ -683,6 +693,8 @@ statementToDef s =
 -- TODO handle expressions
 expressionToData :: Expression -> [(Ty, [Val])]
 expressionToData (Literal (StringLiteral str)) =
+    -- TODO when creating an array of char pointers Pointer<char>[]
+    -- then here we should not contain the literal, but a pointer to it
     [("b", [toEscapedNullString str])]
 expressionToData e@(Literal l) =
     let item = literalToText l
