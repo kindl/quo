@@ -37,11 +37,12 @@ statementToC (If (cond:conds) Nothing) =
     printIf cond conds
 statementToC (If (cond:conds) (Just th)) =
     printIf cond conds <//> printElsePart th
-statementToC (While cond sts) = "while" <+> parens (expressionToC cond)
+statementToC (While cond sts) =
+    "while" <+> parens (expressionToC cond)
     <//> printBlock sts
 statementToC BreakStatement = "break;"
 statementToC ContinueStatement = "continue;"
-statementToC other = error ("Error: CsS Following statement appearedd in printing stage " ++ show other)
+statementToC other = error ("Error in Cgen: Following statement appearedd in printing stage " ++ show other)
 
 printIf :: (Expression, [Statement]) -> [(Expression, [Statement])] -> Doc ann
 printIf cond conds = intercalate "\n" (printIfPart cond : fmap printElseIfPart conds)
@@ -65,7 +66,7 @@ printBlock sts = "{"
 nameToC :: Name -> Doc ann
 nameToC (Name name (ArrayType ty maybeSize)) =
     typeToC ty <+> fromText name <> (case maybeSize of
-        Nothing -> "*"
+        Nothing -> "[]"
         Just size -> "[" <> fromText (pack (show size)) <> "]")
 nameToC (Name name (FunctionType returnType parameterTypes)) =
     typeToC returnType <+> parens ("*" <+> fromText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
@@ -94,7 +95,7 @@ expressionToC (DotAccess e name []) =
 expressionToC (SquareAccess e1 e2) =
     expressionToC e1 <> "[" <> expressionToC e2 <> "]"
 expressionToC (ArrayExpression es) =
-    "[" <> intercalate ", " (fmap expressionToC es) <> "]"
+    "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 
 fromName :: Name -> Doc a
 fromName (Name n _) = fromText n
