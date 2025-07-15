@@ -40,6 +40,7 @@ infixr 6 <//>
 toText :: Doc ann -> Text
 toText d = renderStrict (layoutPretty defaultLayoutOptions d)
 
+find :: (MonadFail m, Show result) => Text -> [(Text, result)] -> m result
 find name env = case lookup name env of
     Nothing -> fail ("Cannot find name " ++ show name ++ " in env " ++ show env)
     Just found -> return found

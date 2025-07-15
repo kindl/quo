@@ -11,7 +11,7 @@ import Control.Monad.Trans.Class(lift)
 import Data.Foldable(traverse_)
 import Data.Int(Int32)
 import Prettyprinter((<+>), Doc, parens)
-import Helpers((<//>), find, indent, fromText, intercalate, escape, isConstructor)
+import Helpers((<//>), indent, fromText, intercalate, escape, isConstructor)
 
 
 -- Ident does not contain a sigil, while Val does
@@ -341,6 +341,7 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offsetVal <- createOffsetVal offset val
     emitLoadOrVal fieldType offsetVal
 
+emitApply :: Expression -> [Expression] -> Emit Text
 emitApply (Variable (Name "cast" _) [targetType]) [parameter] = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
@@ -452,6 +453,7 @@ emitAssignFields structType target expressions = do
     let pairs = fmap snd annotated
     zipWithM_ (emitAssignAux target) pairs expressions
 
+emitAssignAux :: Text -> (Type, Int32) -> Expression -> Emit ()
 emitAssignAux target (ty, off) expression = do
     offsetVal <- createOffsetVal off target
     emitAssignExpression offsetVal ty expression
@@ -659,6 +661,7 @@ registerConstant str = do
     lift (modifyIORef' ref (\c -> c ++ [DataDef freshName [("b", [escaped])]]))
     return ("$" <> freshName)
 
+toEscapedNullString :: Text -> Text
 toEscapedNullString str =
     "\"" <> escape str <> "\\0\""
 
