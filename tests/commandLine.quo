@@ -1,6 +1,6 @@
-extern int puts(Pointer<char> s);
+extern int puts(string s);
 
-int main(int argc, Pointer<char>[] argv) {
+int main(int argc, string[] argv) {
     int currentParameter = 0;
     while (currentParameter < argc) {
         puts(argv[currentParameter]);

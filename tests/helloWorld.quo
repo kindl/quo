@@ -1,4 +1,4 @@
-extern int puts(Pointer<char> str);
+extern int puts(string str);
 
 int main()
 {

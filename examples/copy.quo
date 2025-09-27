@@ -1,7 +1,7 @@
 module copy;
 
-extern int puts(Pointer<char> str);
-extern Pointer<FILE> fopen(Pointer<char> filename, Pointer<char> mode);
+extern int puts(string str);
+extern Pointer<FILE> fopen(string filename, string mode);
 extern int fgetc(Pointer<FILE> stream);
 extern int fputc(int character, Pointer<FILE> stream);
 extern int fclose(Pointer<FILE> stream);
@@ -22,7 +22,7 @@ void copyWithLoop(Pointer<FILE> srcFileHandle, Pointer<FILE> destFileHandle)
 // First, it does not copy file meta data like executable flags
 // Second, it does not have proper cleanup code
 // It should be revisited when quo provides more cleanup capabilities
-int main(int argc, Pointer<char>[] argv) {
+int main(int argc, string[] argv) {
     if (argc < 3) {
         puts("Usage: copy <source> <destionation>");
         return -1;
