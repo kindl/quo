@@ -1,0 +1,16 @@
+extern int puts(string s);
+
+// Test generations of strings in top level definitions
+string[3] strings = ["abc", "def", "ghi"];
+
+int main() {
+    string[3] otherStrings = ["abc", "def", "ghi"];
+    int index = 0;
+    while (index < 3) {
+        puts(otherStrings[index]);
+        puts(strings[index]);
+        index = index + 1;
+    }
+
+    return 0;
+}
