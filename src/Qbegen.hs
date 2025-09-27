@@ -685,9 +685,9 @@ moduleToQbe (Module name statements) = do
 
 -- Top level
 statementToDef :: Statement -> Emit [Def]
-statementToDef (Definition (Name name _) e) =
-    let items = expressionToData e
-    in return [DataDef name items]
+statementToDef (Definition (Name name _) e) = do
+    items <- expressionToData e
+    return [DataDef name items]
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
     let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
     let returnType = toQbeTy ty
@@ -700,19 +700,18 @@ statementToDef (StructDefinition _ _ _) = return []
 statementToDef s =
     fail ("Unexpected statement at top level " ++ show s)
 
--- TODO handle expressions
-expressionToData :: Expression -> [(Ty, [Val])]
-expressionToData (Literal (StringLiteral str)) =
-    -- TODO when creating an array `string[]`
-    -- then this data should not contain the literal,
-    -- but a pointer to a literal outside
-    [("b", [toEscapedNullString str])]
+-- TODO handle expressions. The hard part is,
+-- that this can emit defs, but not instructions
+expressionToData :: Expression -> Emit [(Ty, [Val])]
+expressionToData (Literal (StringLiteral str)) = do
+    name <- registerConstant str
+    return [(toQbeStoreTy stringType, [name])]
 expressionToData e@(Literal l) =
     let item = literalToText l
-    in [(toQbeStoreTy (readType e), [item])]
+    in return [(toQbeStoreTy (readType e), [item])]
 -- TODO constructors, create array as w 1 2 3 instead of w 1, w 2, w 3
 expressionToData (ArrayExpression es) =
-    foldMap expressionToData es
+    fmap concat (traverse expressionToData es)
 
 -- TODO solve problem with void functions
 -- Following function:
