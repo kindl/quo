@@ -25,6 +25,9 @@ voidType = Concrete "void" []
 boolType :: Type
 boolType = Concrete "bool" []
 
+stringType :: Type
+stringType = Concrete "string" []
+
 charType :: Type
 charType = Concrete "char" []
 
@@ -66,8 +69,10 @@ isPrimitive ty = elem ty [boolType, charType,
 
 isPointerType :: Type -> Bool
 isPointerType (PointerType _) = True
+isPointerType (Concrete "string" []) = True
 isPointerType _ = False
 
+-- TODO not for pointers?
 isStructType :: Type -> Bool
 isStructType ty@(Concrete _ _) = not (isPrimitive ty)
 isStructType _ = False

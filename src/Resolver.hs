@@ -212,7 +212,7 @@ readType (ArrayExpression expressions) =
     in ArrayType ty (Just (fromIntegral (length expressions)))
 
 literalType :: Literal -> Type
-literalType (StringLiteral l) = ArrayType (Concrete "char" []) (Just (fromIntegral (Text.length l + 1)))
+literalType (StringLiteral l) = stringType
 literalType (Bool _) = boolType
 literalType (Int32 _) = intType
 literalType (UInt32 _) = uintType
@@ -319,8 +319,8 @@ subsumes :: Type -> Type -> Bool
 subsumes a _ | a == auto = error "auto on left hand"
 subsumes _ b | b == auto = True
 -- TODO find a solution for passing arrays to functions expecting a pointer
-subsumes (ArrayType elementType _) (PointerType pointerType) =
-    subsumes elementType pointerType
+--subsumes (ArrayType elementType _) (PointerType pointerType) =
+--    subsumes elementType pointerType
 subsumes (ArrayType a _) (ArrayType b _) =
     subsumes a b
 subsumes a b = a == b

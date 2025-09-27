@@ -227,6 +227,7 @@ getAlignment (Concrete "ulong" []) = 8
 getAlignment (Concrete "float" []) = 4
 getAlignment (Concrete "double" []) = 8
 getAlignment (Concrete "usize" []) = 8
+getAlignment (Concrete "string" []) = 8
 getAlignment (PointerType _) = 8
 -- TODO allow setting alignment of structs or getting default alignment,
 -- e.g. qbe uses the max alginment of the fields
@@ -291,6 +292,7 @@ getSize _ (Concrete "ulong" []) = 8
 getSize _ (Concrete "float" []) = 4
 getSize _ (Concrete "double" []) = 8
 getSize _ (Concrete "usize" []) = 8
+getSize _ (Concrete "string" []) = pointerSize
 getSize _ (PointerType _) = pointerSize
 getSize structEnv (ArrayType ty (Just arraySize)) =
     let elementSize = getSize structEnv ty
@@ -641,6 +643,7 @@ toQbeTy (Concrete "float" []) = "s"
 toQbeTy (Concrete "double" []) = "d"
 -- void type is just left empty for functions
 toQbeTy (Concrete "void" []) = voidTy
+toQbeTy (Concrete "string" []) = pointerTy
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
@@ -700,8 +703,9 @@ statementToDef s =
 -- TODO handle expressions
 expressionToData :: Expression -> [(Ty, [Val])]
 expressionToData (Literal (StringLiteral str)) =
-    -- TODO when creating an array of char pointers Pointer<char>[]
-    -- then here we should not contain the literal, but a pointer to it
+    -- TODO when creating an array `string[]`
+    -- then this data should not contain the literal,
+    -- but a pointer to a literal outside
     [("b", [toEscapedNullString str])]
 expressionToData e@(Literal l) =
     let item = literalToText l

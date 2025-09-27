@@ -137,5 +137,8 @@ typeToC (Concrete "ulong" []) = "unsigned long long int"
 typeToC (Concrete "float" []) = "float"
 typeToC (Concrete "double" []) = "double"
 typeToC (Concrete "usize" []) = "size_t"
+typeToC (Concrete "string" []) = "char*"
+-- TODO we need to deal with opaque pointers, otherwise
+-- `Pointer<FILE>` becomes `struct FILE*`instead of `FILE*`
 typeToC (Concrete s []) = "struct" <+> fromText s
 typeToC other = error ("Cannot print type of " ++ show other)
