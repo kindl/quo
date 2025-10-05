@@ -1,29 +1,34 @@
 {-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
-module Lexer(lexe, Token(..)) where
+module Lexer(tokenize, Token(..)) where
 
 import Prelude hiding (takeWhile)
 import Data.Char(isSpace, isAlpha, isAlphaNum, isDigit)
-import Types(operators)
+import Types(Location(..), emptyLocation, operators)
 import Control.Applicative((<|>), optional)
 import Data.Attoparsec.Combinator(manyTill', many', eitherP)
 import Data.Attoparsec.Text(Parser, takeWhile, takeWhile1, string, char, satisfy,
-    anyChar, parseOnly, match, option)
+    anyChar, parseOnly, match, option, endOfInput)
 import qualified Data.Text as Text
 import Data.Text(Text, isPrefixOf)
 import Data.Int(Int32, Int64)
 import Data.Word(Word32, Word64)
 import Data.Data(Data, Typeable)
+import Data.List(mapAccumL)
+import Data.Functor(($>))
 
 
 data Token =
-    Identifier Text
+    Identifier Text Location
+    -- Special combines keywords and operators,
+    -- because in some cases, for example for "<"
+    -- a token can be used for both
+    | Special Text Location
     | Int Int32
     | UInt Word32
     | Long Int64
     | ULong Word64
     | Float Float
     | Double Double
-    | Special Text
     | String Text
     | TemplateStringBegin
     | TemplateStringMid Text
@@ -31,28 +36,50 @@ data Token =
     | Whitespace
         deriving (Eq, Show, Data, Typeable)
 
+collapse :: [Either a [a]] -> [a]
+collapse = foldr collapseAux []
+    where
+        collapseAux :: Either a [a] -> [a] -> [a]
+        collapseAux (Left l) es = l : es
+        collapseAux (Right r) es = r ++ es
 
-lexe :: Text -> Either String [Token]
-lexe str = parseOnly (goToTheEnd str lexemes) str
+tokenize :: Text -> Text -> Either String [Token]
+tokenize file input = parseOnly (tokenizeToEnd file) input
 
-goToTheEnd :: Text -> Parser [Token] -> Parser [Token]
-goToTheEnd input p = do
-    (parsed, result) <- match p
-    let (lineNumber, characterNumber) = Text.foldl' advance (1, 1) parsed
-    if Text.length parsed == Text.length input
-        then return (filter (not . isWhitespace) result)
-        else fail ("Lexer failed at " ++ show lineNumber ++ ":" ++ show characterNumber)
+tokenizeToEnd :: Text -> Parser [Token]
+tokenizeToEnd file = do
+    ts <- fmap collapse (many' token <* endOfInput)
+    let located = locate file ts
+    return (filter (not . isWhitespace) located)
 
-lexemes :: Parser [Token]
-lexemes = fmap collapse (many' lexeme)
+locate :: Traversable t => Text -> t (Text, Token) -> t Token
+locate file ts = snd (mapAccumL (\startPosition (parsed, result) ->
+    let
+        endPosition = Text.foldl' advance startPosition parsed
+        location = Location {
+            startLine = fst startPosition,
+            startColumn = snd startPosition,
+            endLine = fst endPosition,
+            endColumn = snd endPosition,
+            fileName = file
+        }
+        locatedToken = overwriteLocation location result
+    in (endPosition, locatedToken)) (1, 1) ts)
 
 isWhitespace :: Token -> Bool
 isWhitespace Whitespace = True
 isWhitespace _ = False
 
-advance :: (Int, Int) -> Char -> (Int, Int)
+advance :: (Word64, Word64) -> Char -> (Word64, Word64)
 advance (l, _) '\n' = (l + 1, 1)
 advance (l, c) _ = (l, c + 1)
+
+overwriteLocation :: Location -> Token -> Token
+overwriteLocation location (Identifier i _) =
+    Identifier i location
+overwriteLocation location (Special op _) =
+    Special op location
+overwriteLocation _ other = other
 
 whitespace :: Parser Token
 whitespace = Whitespace <$ (takeWhile1 isSpace <|> multilineComment <|> singlelineComment)
@@ -63,23 +90,15 @@ multilineComment = fmap Text.pack (string "/*" *> manyTill' anyChar (string "*/"
 singlelineComment :: Parser Text
 singlelineComment = string "//" *> takeWhile (/='\n')
 
--- token
-lexeme :: Parser (Either Token [Token])
-lexeme = eitherP (whitespace <|> singleLexeme) templateString
+token :: Parser (Either (Text, Token) [(Text, Token)])
+token = eitherP (match (whitespace <|> singleToken)) templateString
 
-collapse :: [Either a [a]] -> [a]
-collapse = foldr collapseAux []
-
-collapseAux :: Either a [a] -> [a] -> [a]
-collapseAux (Left l) es = l : es
-collapseAux (Right r) es = r ++ es
-
-singleLexeme :: Parser Token
-singleLexeme = fmap String nonTemplateString
+singleToken :: Parser Token
+singleToken = fmap String nonTemplateString
     -- Numbers have to come before special,
     -- so that the minus sign becomes part of the number
     <|> numberToken
-    <|> fmap Special special
+    <|> fmap (flip Special emptyLocation) special
     <|> fmap identifierOrKeyword identifier
 
 digits :: Parser Text
@@ -131,7 +150,9 @@ identifier = do
 
 identifierOrKeyword :: Text -> Token
 identifierOrKeyword i =
-    if elem i keywords then Special i else Identifier i
+    if elem i keywords
+        then Special i emptyLocation
+        else Identifier i emptyLocation
 
 nonTemplateString :: Parser Text
 nonTemplateString =
@@ -145,12 +166,12 @@ escapeSequence = char '\\' *>
     <|> char 't' *> return '\t'
     <|> char '0' *> return '\0')
 
-templateString :: Parser [Token]
+templateString :: Parser [(Text, Token)]
 templateString = do
-    _ <- string "$\""
-    midParts <- many' (eitherP templateStringPart expressionPart)
-    _ <- char '\"'
-    return (TemplateStringBegin : collapse midParts ++ [TemplateStringEnd])
+    begin <- match (string "$\"" $> TemplateStringBegin)
+    midParts <- many' (eitherP (match templateStringPart) expressionPart)
+    end <- match (char '\"' $> TemplateStringEnd)
+    return (begin : collapse midParts ++ [end])
 
 templateStringPart :: Parser Token
 templateStringPart = fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x == '\\' && x /= '{'))
@@ -158,16 +179,16 @@ templateStringPart = fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x
 escapedString :: (Char -> Bool) -> Parser Text
 escapedString p = fmap Text.concat (many' (takeWhile1 p <|> fmap Text.singleton escapeSequence))
 
-expressionPart :: Parser [Token]
-expressionPart = char '{' *> fmap collapse (manyTill' lexeme (char '}'))
+-- TODO ignoring the braces will result in wrong column numbers
+expressionPart :: Parser [(Text, Token)]
+expressionPart = char '{' *> fmap collapse (manyTill' token (char '}'))
 
 -- special characters
-special :: Parser Text
-special = foldr1 (<|>) (fmap string specials)
-
 -- beware that the order matters. == and => has to come before =
-specials :: [Text]
-specials = punctuation ++ operators ++ brackets
+special :: Parser Text
+special =
+    foldr1 (<|>)
+        (fmap string (punctuation ++ operators ++ brackets))
 
 keywords :: [Text]
 keywords = ["fn", "if", "else", "return", "let", "true", "false",

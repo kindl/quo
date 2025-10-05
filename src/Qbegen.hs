@@ -122,7 +122,7 @@ statementToBlock (Call expression) =
     expressionToVal expression >> return ()
 statementToBlock (Definition name expression) =
     definitionToBlocks name expression
-statementToBlock (Assignment (Variable (Name name ty) _) rightHand) = do
+statementToBlock (Assignment (Variable (Name name ty _) _) rightHand) = do
     -- TODO handling complex leftHand expressions
     wasParam <- isParam name
     when wasParam (fail ("Parameter " ++ show name ++ " is constant and cannot be reassigned"))
@@ -168,15 +168,15 @@ statementToBlock ContinueStatement = do
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
 definitionToBlocks :: Name -> Expression -> Emit ()
-definitionToBlocks (Name name structType) (Apply (Variable constructor []) expressions) | isConstructor constructor = do
+definitionToBlocks (Name name structType _) (Apply (Variable constructor []) expressions) | isConstructor constructor = do
     -- This special case exists so that assigning new structs does not allocate twice,
     -- one alloc for the definition and one for the expression
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
-definitionToBlocks (Name name (ArrayType elementType _)) (ArrayExpression expressions) = do
+definitionToBlocks (Name name (ArrayType elementType _) _) (ArrayExpression expressions) = do
     emitAlloc name (ArrayType elementType (Just (fromIntegral (length expressions))))
     emitAssignElements elementType ("%" <> name) expressions
-definitionToBlocks (Name name ty) expression = do
+definitionToBlocks (Name name ty _) expression = do
     -- The allocation for locals are not emitted here, but per function.
     -- This is necessary so that we do not keep reallocating,
     -- for example in a while-loop
@@ -306,9 +306,9 @@ getSize structEnv ty@(Concrete structName []) =
 getSize _ other = error ("Cannot determine size of type " ++ show other)
 
 expressionToVal :: Expression -> Emit Val
-expressionToVal (Variable (Name "nullptr" _) []) =
+expressionToVal (Variable (Name "nullptr" _ _) []) =
     return "0"
-expressionToVal (Variable (Name name ty) []) = do
+expressionToVal (Variable (Name name ty _) []) = do
     wasParam <- isParam name
     wasGlobal <- isGlobal name
     let sigil = if wasGlobal then "$" else "%"
@@ -336,7 +336,7 @@ expressionToVal (SquareAccess expression accessor) = do
     emit (Instruction offsetVal pointerTy "add" [val, "%" <> mulVal])
 
     emitLoadOrVal elementType ("%" <> offsetVal)
-expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
+expressionToVal (DotAccess expression (Name fieldName fieldType _) []) = do
     val <- expressionToVal expression
     let structType = readType expression
     offset <- getOffset structType fieldName
@@ -344,19 +344,19 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     emitLoadOrVal fieldType offsetVal
 
 emitApply :: Expression -> [Expression] -> Emit Text
-emitApply (Variable (Name "cast" _) [targetType]) [parameter] = do
+emitApply (Variable (Name "cast" _ _) [targetType]) [parameter] = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
     emitCast parameterType targetType val
-emitApply (Variable (Name "sizeof" (FunctionType _ _)) [typeParameter]) _ =
+emitApply (Variable (Name "sizeof" (FunctionType _ _) _) [typeParameter]) _ =
     getSizeAsVal typeParameter
-emitApply (Variable n@(Name _ (FunctionType structType _)) []) expressions | isConstructor n = do
+emitApply (Variable n@(Name _ (FunctionType structType _) _) []) expressions | isConstructor n = do
     ident <- newIdent ".local"
     emitAlloc ident structType
     emitAssignFields structType ("%" <> ident) expressions
     return ("%" <> ident)
 -- TODO try to combine the following cases if possible
-emitApply (Variable (Name name (FunctionType returnType parameterTypes)) []) expressions = do
+emitApply (Variable (Name name (FunctionType returnType parameterTypes) _) []) expressions = do
     freshIdent <- newIdent ".local"
     vals <- traverse expressionToVal expressions
     let retTy = toQbeWordTy returnType
@@ -685,11 +685,11 @@ moduleToQbe (Module name statements) = do
 
 -- Top level
 statementToDef :: Statement -> Emit [Def]
-statementToDef (Definition (Name name _) e) = do
+statementToDef (Definition name e) = do
     items <- expressionToData e
-    return [DataDef name items]
+    return [DataDef (getText name) items]
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    let qbeParams = fmap (\(Name n t) -> (toQbeTy t, n)) parameters
+    let qbeParams = fmap (\param -> (toQbeTy (getType param), getText param)) parameters
     let returnType = toQbeTy ty
     blocks <- withFreshEmitEnv (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
@@ -742,14 +742,14 @@ isJumpStatement _ = False
 
 structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
-    [TypeDef ident (fmap (\(Name _ ty) -> toQbeStoreTy ty) fields)]
+    [TypeDef ident (fmap (toQbeStoreTy . getType) fields)]
 structToDef _ = []
 
 gatherGlobalNames :: [Statement] -> [Text]
 gatherGlobalNames = foldMap gatherGlobalName
 
 gatherGlobalName :: Statement -> [Text]
-gatherGlobalName (Definition (Name name _) _) = [name]
+gatherGlobalName (Definition name _) = [getText name]
 gatherGlobalName (FunctionDefintion name _ _ _ _) = [name]
 gatherGlobalName (ExternDefintion name _ _) = [name]
 gatherGlobalName _ = []

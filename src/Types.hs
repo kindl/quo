@@ -7,6 +7,17 @@ import Data.Word(Word32, Word64)
 import Data.Data(Data, Typeable)
 
 
+data Location = Location {
+    startLine :: Word64,
+    startColumn :: Word64,
+    endLine :: Word64,
+    endColumn :: Word64,
+    fileName :: Text
+} deriving (Eq, Show, Data, Typeable)
+
+emptyLocation :: Location
+emptyLocation = Location 0 0 0 0 ""
+
 type ArraySize = Int32
 
 data Type =
@@ -72,18 +83,13 @@ isPointerType (PointerType _) = True
 isPointerType (Concrete "string" []) = True
 isPointerType _ = False
 
--- TODO not for pointers?
-isStructType :: Type -> Bool
-isStructType ty@(Concrete _ _) = not (isPrimitive ty)
-isStructType _ = False
-
 isFunctionType :: Type -> Bool
 isFunctionType (FunctionType _ _) = True
 isFunctionType _ = False
 
 makeFunctionType :: ReturnType -> [Parameter] -> Type
 makeFunctionType returnType parameters =
-    FunctionType returnType (fmap (\(Name _ t) -> t) parameters)
+    FunctionType returnType (fmap getType parameters)
 
 makeConcrete :: Text -> [ReturnType] -> Type
 makeConcrete "Fn" typeParameters =
@@ -102,8 +108,11 @@ operators = ["==", "<=", ">=", "!=", "&&", "||", "-_",
     "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
 
 
-data Name = Name Text Type
-    deriving (Eq, Show, Data, Typeable)
+data Name = Name {
+    getText :: Text,
+    getType :: Type,
+    getLocation :: Location
+} deriving (Show, Data, Typeable)
 
 -- Consider adding (Maybe Expression) for default parameters
 type Parameter = Name
@@ -113,7 +122,7 @@ type TypeParameter = Text
 type ReturnType = Type
 
 data Module = Module Text [Statement]
-    deriving (Eq, Show, Data, Typeable)
+    deriving (Show, Data, Typeable)
 
 data Statement =
     Definition Name Expression
@@ -130,7 +139,7 @@ data Statement =
     | Switch Expression [(Expression, [Statement])]
     | BreakStatement
     | ContinueStatement
-        deriving (Eq, Show, Data, Typeable)
+        deriving (Show, Data, Typeable)
 
 -- TODO find the best option to model generics
 -- Currently the type parameters are part of Variable and DotAccess
@@ -147,7 +156,7 @@ data Expression =
     | SquareAccess Expression Expression
     | ArrayExpression [Expression]
     | Literal Literal
-        deriving (Eq, Show, Data, Typeable)
+        deriving (Show, Data, Typeable)
 
 data Literal =
     StringLiteral Text

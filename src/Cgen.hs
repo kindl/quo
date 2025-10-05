@@ -66,14 +66,14 @@ printBlock sts = "{"
 -- for example array size specifier come after the identifier in C:
 -- int numbers[3]; instead of int[3] numbers;
 nameToC :: Name -> Doc ann
-nameToC (Name name (ArrayType ty maybeSize)) =
+nameToC (Name name (ArrayType ty maybeSize) loc) =
     -- Call recursively to handle array of arrays
-    nameToC (Name name ty) <> (case maybeSize of
+    nameToC (Name name ty loc) <> (case maybeSize of
         Nothing -> "[]"
         Just size -> "[" <> fromText (pack (show size)) <> "]")
-nameToC (Name name (FunctionType returnType parameterTypes)) =
+nameToC (Name name (FunctionType returnType parameterTypes) _) =
     typeToC returnType <+> parens ("*" <+> fromText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
-nameToC (Name name ty) =
+nameToC (Name name ty _) =
     typeToC ty <+> fromText name
 
 fieldToC :: Name -> Doc ann
@@ -81,27 +81,31 @@ fieldToC name = nameToC name <> ";"
 
 expressionToC :: Expression -> Doc a
 expressionToC (Variable name []) = fromName name
+expressionToC (Variable name typeParameters) =
+    error ("Unexpected variable " ++ show name ++ " with type paramers " ++ show typeParameters)
 expressionToC (Literal l) = literalToC l
 -- Operators
-expressionToC (Apply (Variable (Name "cast" _) [ty]) [expression]) =
+expressionToC (Apply (Variable (Name "cast" _ _) [ty]) [expression]) =
     parens (parens (typeToC ty) <> expressionToC expression)
-expressionToC (Apply (Variable (Name "sizeof" _) [ty]) []) =
+expressionToC (Apply (Variable (Name "sizeof" _ _) [ty]) []) =
     "sizeof" <> parens (typeToC ty)
-expressionToC (Apply (Variable (Name v _) _) [e1, e2]) | isOperator v =
+expressionToC (Apply (Variable (Name v _ _) _) [e1, e2]) | isOperator v =
     parensWrapped e1 <+> fromText v <+> parensWrapped e2
-expressionToC (Apply (Variable n@(Name v _) _) es) | isConstructor n =
+expressionToC (Apply (Variable n@(Name v _ _) _) es) | isConstructor n =
     parens ("struct" <+> fromText v)
         <> "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 expressionToC (Apply e es) = expressionToC e <> parens (intercalate ", " (fmap expressionToC es))
 expressionToC (DotAccess e name []) =
     expressionToC e <> "." <> fromName name
+expressionToC (DotAccess _ name typeParameters) =
+    error ("Unexpected dot access " ++ show name ++ " with type parameters " ++ show typeParameters)
 expressionToC (SquareAccess e1 e2) =
     expressionToC e1 <> "[" <> expressionToC e2 <> "]"
 expressionToC (ArrayExpression es) =
     "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 
 fromName :: Name -> Doc a
-fromName (Name n _) = fromText n
+fromName name = fromText (getText name)
 
 literalToC :: Literal -> Doc a
 literalToC (Int32 l) = fromText (pack (show l))
@@ -118,7 +122,8 @@ literalToC (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 parensWrapped :: Expression -> Doc a
 parensWrapped e =
     case e of
-        (Apply (Variable (Name i _) _) _) | isOperator i -> parens (expressionToC e)
+        (Apply (Variable name _) _) | isOperator (getText name) ->
+            parens (expressionToC e)
         _ -> expressionToC e
 
 typeToC :: Type -> Doc a

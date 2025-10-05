@@ -60,9 +60,9 @@ externDefinition = do
 forStatement :: Parser Statement
 forStatement = do
     _ <- token "for"
-    (i, t, e) <- parens forPart
+    (i, loc, ty, e) <- parens forPart
     body <- curlies statements
-    return (For (Name i t) e body)
+    return (For (Name i ty loc) e body)
 
 continueStatement :: Parser Statement
 continueStatement = do
@@ -83,9 +83,9 @@ whileStatement = do
     body <- curlies statements
     return (While e body)
 
-forPart :: Parser (Text, Type, Expression)
+forPart :: Parser (Text, Location, Type, Expression)
 forPart =
-    liftA3 (\t i e -> (i, t, e)) typeOrLet identifier (token "in" *> expr)
+    liftA3 (\ty (i, loc) e -> (i, loc, ty, e)) typeOrLet identifierWithLocation (token "in" *> expr)
 
 -- Consider turning switch into expression
 -- The problem is, that this creates a circle:
@@ -105,7 +105,7 @@ switchOptions =
 
 definition :: Parser Statement
 definition =
-    liftA3 (\t i e -> Definition (Name i t) e) typeOrLet identifier (token "=" *> expr <* token ";")
+    liftA3 (\ty (i, loc) e -> Definition (Name i ty loc) e) typeOrLet identifierWithLocation (token "=" *> expr <* token ";")
 
 typeOrLet :: Parser Type
 typeOrLet = (token "let" $> auto) <|> typeOrAuto
@@ -131,7 +131,7 @@ functionDefintion = do
     return (FunctionDefintion i ts t params body)
 
 parameter :: Parser Name
-parameter = liftA2 (flip Name) typeVariable identifier
+parameter = liftA2 (\ty (i, loc) -> Name i ty loc) typeVariable identifierWithLocation
 
 ifStatement :: Parser Statement
 ifStatement = do

@@ -8,27 +8,32 @@ import Data.Functor(($>))
 import Data.Attoparsec.Combinator(eitherP, option, sepBy)
 import Control.Monad.Trans.State.Strict(StateT(..), runStateT)
 import Types
-import Lexer(lexe, Token(..))
+import Lexer(tokenize, Token(..))
 import qualified Data.Text.IO as Text
-import Data.Text(Text)
+import Data.Text(Text, pack)
 import Data.Int(Int32, Int64)
 import Data.Word(Word32, Word64)
 
 
 type Parser a = StateT [Token] Maybe a
 
-parseFile :: Show a => Parser a -> FilePath -> IO (Either String a)
-parseFile parser fileName = fmap (parse parser) (Text.readFile fileName)
+parseFile :: String -> Parser b -> IO b
+parseFile file parser = do
+    contents <- Text.readFile file
+    either fail return (parse file parser contents)
 
-lexeFile :: FilePath -> IO (Either String [Token])
-lexeFile fileName = fmap lexe (Text.readFile fileName)
+tokenizeFile :: FilePath -> IO (Either String [Token])
+tokenizeFile file =
+    fmap (tokenize (pack file)) (Text.readFile file)
 
-parse :: Show a => Parser a -> Text -> Either String a
-parse parser str = case lexe str of
-    Left e -> Left e
-    Right l -> case runStateT parser l of
-        Just (block, []) -> Right block
-        other -> Left (show other)
+parse :: String -> Parser a -> Text -> Either String a
+parse file parser str = case tokenize (pack file) str of
+    Left err -> Left err
+    Right ts -> case runStateT parser ts of
+        Just (result, []) -> Right result
+        Just (_, rest) ->
+            Left ("Could not parse til end " ++ show (take 3 rest))
+        Nothing -> Left ("Could not tokenize file " ++ file)
 
 next :: Parser Token
 next = StateT uncons
@@ -55,47 +60,55 @@ expr = conditionalOp
 -- a = wasTrue? thenCase : elseCase
 conditionalOp :: Parser Expression
 conditionalOp =
-    liftA3 makeConditionalOp orOp (token "?" *> optional expr) (token ":" *> expr) <|> orOp
+    (makeConditionalOp <$> orOp <*> fmap snd (operator "?") <*> optional expr <*> (operator ":" *> expr))
+    <|> orOp
 
-makeConditionalOp :: Expression -> Maybe Expression -> Expression -> Expression
-makeConditionalOp a thenBranch b =
-    Apply (Variable (Name "?:" auto) []) ([a] ++ maybe [] return thenBranch ++ [b])
+makeConditionalOp :: Expression -> Location -> Maybe Expression -> Expression -> Expression
+makeConditionalOp a loc thenBranch b =
+    Apply (Variable (Name "?:" auto loc) []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp :: Parser Expression
-orOp = leftAssoc makeBinaryOp (token "||") andOp
+orOp = leftAssoc makeBinaryOp (operator "||") andOp
 
 andOp :: Parser Expression
-andOp = leftAssoc makeBinaryOp (token "&&") compareOp
+andOp = leftAssoc makeBinaryOp (operator "&&") compareOp
 
 compareOp :: Parser Expression
-compareOp = leftAssoc makeBinaryOp (token "<" <|> token ">" <|> token "<=" <|> token ">=" <|> token "!=" <|> token "==") addOp
+compareOp =
+    leftAssoc makeBinaryOp (operator "<" <|> operator ">" <|> operator "<=" <|> operator ">=" <|> operator "!=" <|> operator "==") addOp
 
 -- arithmethic operators
 addOp :: Parser Expression
-addOp = leftAssoc makeBinaryOp (token "+" <|> token "-") mulOp
+addOp = leftAssoc makeBinaryOp (operator "+" <|> operator "-") mulOp
 
 mulOp :: Parser Expression
-mulOp = leftAssoc makeBinaryOp (token "*" <|> token "/" <|> token "%") expoOp
+mulOp = leftAssoc makeBinaryOp (operator "*" <|> operator "/" <|> operator "%") expoOp
 
 expoOp :: Parser Expression
-expoOp = liftA3 makeBinaryOp unOp (token "^") expoOp <|> unOp
+expoOp = liftA3 makeBinaryOp unOp (operator "^") expoOp <|> unOp
 
-makeBinaryOp :: Expression -> Text -> Expression -> Expression
-makeBinaryOp a opName b = Apply (Variable (Name opName auto) []) [a, b]
+makeBinaryOp :: Expression -> (Text, Location) -> Expression -> Expression
+makeBinaryOp a (opName, loc) b =
+    Apply (Variable (Name opName auto loc) []) [a, b]
 
 leftAssoc :: Alternative f => (t -> sep -> t -> t) -> f sep -> f t -> f t
 leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
--- unary minus has a separate name
--- to differentiate between negation and subtraction
 unOp :: Parser Expression
-unOp = liftA2 makeUnaryOp (token "!" <|> (token "-" $> "-_")) postfixExpression
+unOp = liftA2 makeUnaryOp (operator "!" <|> unaryMinus) postfixExpression
     <|> postfixExpression
 
-makeUnaryOp :: Text -> Expression -> Expression
-makeUnaryOp opName a = Apply (Variable (Name opName auto) []) [a]
+-- unary minus uses "-_" to differentiate between negation and subtraction
+unaryMinus :: Parser (Text, Location)
+unaryMinus = do
+    (_, loc) <- operator "-"
+    return ("-_", loc)
+
+makeUnaryOp :: (Text, Location) -> Expression -> Expression
+makeUnaryOp (opName, loc) a =
+    Apply (Variable (Name opName auto loc) []) [a]
 
 templateString :: Parser Expression
 templateString = do
@@ -104,7 +117,7 @@ templateString = do
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    return (Apply (Variable (Name "format" auto) []) [parameter1, parameter2])
+    return (Apply (Variable (Name "format" auto emptyLocation) []) [parameter1, parameter2])
 
 templateStringMid :: Parser Expression
 templateStringMid = do
@@ -142,8 +155,8 @@ primaryExpression =
 
 -- a.b
 dotAcces :: Parser (Expression -> Expression)
-dotAcces = liftA2 (\i ts e -> DotAccess e (Name i auto) ts)
-    (token "." *> identifier)
+dotAcces = liftA2 (\(i, loc) ts e -> DotAccess e (Name i auto loc) ts)
+    (token "." *> identifierWithLocation)
     (option [] typeParameters)
 
 -- a[2]
@@ -157,7 +170,8 @@ parameterList :: Parser (Expression -> Expression)
 parameterList = fmap (flip Apply) (parens (sepByTrailing expr (token ",")))
 
 variable :: Parser Expression
-variable = liftA2 (\i ts -> Variable (Name i auto) ts) identifier (option [] typeParameters)
+variable =
+    liftA2 (\(i, loc) ts -> Variable (Name i auto loc) ts) identifierWithLocation (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer :: Parser Int32
@@ -193,14 +207,26 @@ string = do
 bool :: Parser Literal
 bool = (token "true" $> Bool True) <|> (token "false" $> Bool False)
 
+identifierWithLocation :: Parser (Text, Location)
+identifierWithLocation = do
+    Identifier i loc <- next
+    return (i, loc)
+
+operator :: Text -> Parser (Text, Location)
+operator t = do
+    Special op loc <- next
+    if op == t
+        then return (op, loc)
+        else fail "operator"
+
 identifier :: Parser Text
 identifier = do
-    Identifier i <- next
+    Identifier i _ <- next
     return i
 
 token :: Text -> Parser Text
 token t = do
-    Special s <- next
+    Special s _ <- next
     if s == t then return t else fail "token"
 
 parens :: Parser a -> Parser a

@@ -24,7 +24,7 @@ main = do
 compile :: FilePath -> FilePath -> IO ()
 compile inputPath outputPath = do
     content <- Text.readFile inputPath
-    parsed <- either fail return (parse Statements.moduleDefinition content)
+    parsed <- either fail return (parse inputPath Statements.moduleDefinition content)
     -- Turn generic definitions into concrete definitions
     specialized <- specializeModule parsed
     -- Annotate variables with types

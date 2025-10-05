@@ -7,7 +7,6 @@ import Control.Applicative(liftA2)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
 import Control.Monad(zipWithM, when)
 import Data.Text(Text)
-import qualified Data.Text as Text
 import Platte(transformBi)
 import Data.Maybe(fromMaybe)
 import Helpers(find)
@@ -122,12 +121,12 @@ resolveStatements :: [Statement] -> Resolve [Statement]
 resolveStatements = foldr (resolveDefinition resolveStatement) (return mempty)
 
 resolveDefinition :: (Statement -> Resolve Statement) -> Statement -> Resolve [Statement] -> Resolve [Statement]
-resolveDefinition _ (Definition (Name name annotatedType) value) rest = do
+resolveDefinition _ (Definition (Name name annotatedType loc) value) rest = do
     resolved <- resolveExpression value annotatedType
     -- If the type was inferred, replace with the result type, otherwise leave it
     let newType = if annotatedType == auto then readType resolved else annotatedType
     rest' <- with (entry name newType) rest
-    return (Definition (Name name newType) resolved : rest')
+    return (Definition (Name name newType loc) resolved : rest')
 resolveDefinition f statement rest = do
     resolved <- f statement
     rest' <- rest
@@ -148,11 +147,11 @@ resolveStatement (If branches elseBranch) = do
     return (If resolvedOptions resolvedElseBranch)
 resolveStatement (While condition statements) =
     liftA2 While (resolveExpression condition boolType) (resolveStatements statements)
-resolveStatement (For (Name name annotatedType) expression statements) = do
+resolveStatement (For (Name name annotatedType loc) expression statements) = do
     resolvedExpression <- resolveExpression expression (ArrayType annotatedType Nothing)
     let (ArrayType elementType _) = readType resolvedExpression
     resolvedStatements <- with (entry name elementType) (resolveStatements statements)
-    return (For (Name name elementType) resolvedExpression resolvedStatements)
+    return (For (Name name elementType loc) resolvedExpression resolvedStatements)
 resolveStatement (Switch expression branches) = do
     resolvedExpression <- resolveExpression expression auto
     let conditionType = readType resolvedExpression
@@ -168,7 +167,7 @@ resolveBranch conditionType (condition, statements) =
     liftA2 (,) (resolveExpression condition conditionType) (resolveStatements statements)
 
 nameToPair :: Name -> (Text, Type)
-nameToPair (Name n t) = (n, t)
+nameToPair name = (getText name, getType name)
 
 entry :: Text -> Type -> TypeLookup
 entry text value = [(text, value)]
@@ -195,8 +194,8 @@ gatherStruct (StructDefinition text [] parameters) =
 gatherStruct _ = mempty
 
 readType :: Expression -> Type
-readType (Variable (Name _ ty) _) = ty
-readType (DotAccess _ (Name _ ty) _) = ty
+readType (Variable name _) = getType name
+readType (DotAccess _ name _) = getType name
 readType (Apply e _) = case readType e of
     FunctionType returnType _ -> returnType
     ty -> error ("Cannot read type of expression " ++ show e ++ " which applies " ++ show ty)
@@ -212,7 +211,7 @@ readType (ArrayExpression expressions) =
     in ArrayType ty (Just (fromIntegral (length expressions)))
 
 literalType :: Literal -> Type
-literalType (StringLiteral l) = stringType
+literalType (StringLiteral _) = stringType
 literalType (Bool _) = boolType
 literalType (Int32 _) = intType
 literalType (UInt32 _) = uintType
@@ -222,30 +221,30 @@ literalType (Float32 _) = floatType
 literalType (Float64 _) = doubleType
 
 resolveExpression :: Expression -> Type -> Resolve Expression
-resolveExpression (Variable (Name "sizeof" _) [ty]) _ =
+resolveExpression (Variable (Name "sizeof" _ loc) [ty]) _ =
     -- Checking the expected type here is mostly not necessary,
     -- because functions are checked against auto first anyway
-    return (Variable (Name "sizeof" (FunctionType usizeType [])) [ty])
-resolveExpression (Variable (Name name _) []) expectedType = do
+    return (Variable (Name "sizeof" (FunctionType usizeType []) loc) [ty])
+resolveExpression (Variable (Name name _ loc) []) expectedType = do
     env <- getVariableEnv
-    ty <- find name env
+    ty <- find name loc env
     if subsumes ty expectedType
-        then return (Variable (Name name ty) [])
+        then return (Variable (Name name ty loc) [])
         else fail ("Actual type " ++ show ty ++ " did not match " ++ show expectedType)
-resolveExpression (DotAccess expression (Name name _) []) expectedType = do
+resolveExpression (DotAccess expression (Name name _ loc) []) expectedType = do
     resolved <- resolveExpression expression auto
     let resolvedType = readType resolved
     fields <- findFields resolvedType
-    fieldType <- find name fields
+    fieldType <- find name loc fields
     if subsumes fieldType expectedType
-        then return (DotAccess resolved (Name name fieldType) [])
+        then return (DotAccess resolved (Name name fieldType loc) [])
         else fail ("Actual type " ++ show fieldType ++ " did not match " ++ show expectedType)
-resolveExpression (Apply (Variable (Name "cast" _) [resultType]) [parameter]) expectedType = do
+resolveExpression (Apply (Variable (Name "cast" _ loc) [resultType]) [parameter]) expectedType = do
     resolvedParameter <- resolveExpression parameter auto
     let parameterType = readType resolvedParameter
     let castFunctionType = FunctionType resultType [parameterType]
     if subsumes resultType expectedType
-        then return (Apply (Variable (Name "cast" castFunctionType) [resultType]) [resolvedParameter])
+        then return (Apply (Variable (Name "cast" castFunctionType loc) [resultType]) [resolvedParameter])
         else fail ("Cast type " ++ show resultType ++ " did not match expected type " ++ show expectedType)
 resolveExpression (Apply expression parameters) expectedType = do
     resolvedFunction <- resolveExpression expression auto
@@ -276,16 +275,16 @@ resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ sh
 
 -- TODO handle conversions, for example 1 == 1.0
 resolveOperator :: Type -> Expression -> [Expression] -> Expression
-resolveOperator returnType (Variable (Name name _) []) [resolved] =
+resolveOperator returnType (Variable (Name name _ loc) []) [resolved] =
     let
         parameterType = readType resolved
         resolvedReturnType = if returnType == auto then parameterType else returnType
-    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType])) []) [resolved]
-resolveOperator returnType (Variable (Name name _) []) [resolved1, resolved2] =
+    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType]) loc) []) [resolved]
+resolveOperator returnType (Variable (Name name _ loc) []) [resolved1, resolved2] =
     let
         parameterType = readType resolved1
         resolvedReturnType = if returnType == auto then parameterType else returnType
-    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType])) []) [resolved1, resolved2]
+    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType]) loc) []) [resolved1, resolved2]
 resolveOperator _ other _ =
     error ("Cannot resolve operator " ++ show other)
 
@@ -328,7 +327,7 @@ subsumes a b = a == b
 findFields :: Type -> Resolve TypeLookup
 findFields (Concrete structName []) = do
     structEnv <- getStructEnv
-    find structName structEnv
+    find structName emptyLocation structEnv
 findFields (PointerType innerTy) =
     findFields innerTy
 findFields ty =

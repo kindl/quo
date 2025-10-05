@@ -63,13 +63,13 @@ specialize m =
     let
         f e@(Variable _ []) =
             return e
-        f e@(Variable (Name name _) _) | isSpecial name =
+        f e@(Variable name _) | isSpecial (getText name) =
             return e
-        f (Variable (Name name ty) typeParameters) = do
+        f (Variable (Name name ty loc) typeParameters) = do
             let concreteName = concretize name typeParameters
             ensureInstance name typeParameters
             lift (putStrLn ("Ensure specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
-            return (Variable (Name concreteName ty) [])
+            return (Variable (Name concreteName ty loc) [])
         f e = return e
 
         g ty@(Concrete _ []) =
