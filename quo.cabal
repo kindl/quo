@@ -33,6 +33,7 @@ executable quo
         transformers < 0.7,
         prettyprinter < 1.8,
         process,
+        optparse-applicative,
         filepath,
         directory,
         text
