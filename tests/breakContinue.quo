@@ -1,0 +1,24 @@
+extern int putchar(int c);
+
+int numberToChar(int n)
+{
+    return n + 48;
+}
+
+int main()
+{
+    int counter = 9;
+    while (true) {
+        putchar(numberToChar(counter));
+        // Newline
+        putchar(10);
+        counter = counter - 1;
+        if (counter >= 0) {
+            continue;
+        } else {
+            break;
+        }
+    }
+
+    return 0;
+}
