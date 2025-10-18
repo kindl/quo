@@ -64,22 +64,23 @@ specialize m =
     let
         f e@(Variable _ []) =
             return e
-        f e@(Variable name _) | isSpecial (getText name) =
+        f e@(Variable name _) | isSpecial (getInnerText name) =
             return e
-        f (Variable (Name name ty loc) typeParameters) = do
-            let concreteName = concretize name typeParameters
-            ensureInstance name typeParameters
+        f (Variable name typeParameters) = do
+            let concreteName = concretize (getInnerText name) typeParameters
+            let ty = getType name
+            ensureInstance (getInnerText name) typeParameters
             lift (putStrLn ("Ensure specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
-            return (Variable (Name concreteName ty loc) [])
+            return (Variable (Name (overwriteText concreteName (getLocatedText name)) ty) [])
         f e = return e
 
         g ty@(Concrete _ []) =
             return ty
-        g ty@(Concrete name _) | isSpecial (getTxt name) =
+        g ty@(Concrete name _) | isSpecial (getText name) =
             return ty
         g (Concrete name typeParameters) = do
-            let concreteName = concretize (getTxt name) typeParameters
-            ensureInstance (getTxt name) typeParameters
+            let concreteName = concretize (getText name) typeParameters
+            ensureInstance (getText name) typeParameters
             lift (putStrLn ("Ensure type specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
             return (Concrete (overwriteText concreteName name) [])
         g ty = return ty
@@ -109,13 +110,13 @@ instantiate :: Text -> [Type] -> Statement -> Statement
 instantiate genericName typeParameters (StructDefinition def functionTypeParameters fields) =
     let
         concreteName = concretize genericName typeParameters
-        subst = zipTypeParameters (fmap getTxt functionTypeParameters) typeParameters
+        subst = zipTypeParameters (fmap getText functionTypeParameters) typeParameters
         fields' = substitute subst fields
     in StructDefinition (overwriteText concreteName def) [] fields'
 instantiate genericName typeParameters (FunctionDefintion def functionTypeParameters returnType parameters body) =
     let
         concreteName = concretize genericName typeParameters
-        subst = zipTypeParameters (fmap getTxt functionTypeParameters) typeParameters
+        subst = zipTypeParameters (fmap getText functionTypeParameters) typeParameters
         returnType' = substitute subst returnType
         parameters' = substitute subst parameters
         body' = substitute subst body
@@ -142,8 +143,8 @@ lookupDefinition name (def:rest) =
     if getName def == name then Just def else lookupDefinition name rest
 
 getName :: Statement -> Text
-getName (FunctionDefintion name _ _ _ _) = getTxt name
-getName (StructDefinition name _ _) = getTxt name
+getName (FunctionDefintion name _ _ _ _) = getText name
+getName (StructDefinition name _ _) = getText name
 getName statement = error ("Expected definition for getName, but was " ++ show statement)
 
 -- These receive type parameters, but cannot be specialized, because they have no definition
@@ -155,6 +156,6 @@ concretize name typeParameters =
     foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap compactName typeParameters)
 
 compactName :: Type -> Text
-compactName (Concrete name []) = getTxt name
+compactName (Concrete name []) = getText name
 compactName (PointerType ty) = compactName ty <> "ptr"
 compactName ty = error ("Failed pretty " ++ show ty)

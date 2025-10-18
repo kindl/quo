@@ -123,8 +123,10 @@ statementToBlock (Call expression) =
     expressionToVal expression >> return ()
 statementToBlock (Definition name expression) =
     definitionToBlocks name expression
-statementToBlock (Assignment (Variable (Name name ty _) _) rightHand) = do
+statementToBlock (Assignment (Variable var _) rightHand) = do
     -- TODO handling complex leftHand expressions
+    let name = getInnerText var
+    let ty = getType var
     wasParam <- isParam name
     when wasParam (fail ("Parameter " ++ show name ++ " is constant and cannot be reassigned"))
     wasGlobal <- isGlobal name
@@ -169,18 +171,26 @@ statementToBlock ContinueStatement = do
 statementToBlock s = fail ("Cannot compile statement " ++ show s)
 
 definitionToBlocks :: Name -> Expression -> Emit ()
-definitionToBlocks (Name name structType _) (Apply (Variable constructor []) expressions) | isConstructor constructor = do
+definitionToBlocks nameWithType (Apply (Variable constructor []) expressions) | isConstructor constructor = do
     -- This special case exists so that assigning new structs does not allocate twice,
     -- one alloc for the definition and one for the expression
+    let name = getInnerText nameWithType
+    let structType = getType nameWithType
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
-definitionToBlocks (Name name (ArrayType elementType _) _) (ArrayExpression expressions) = do
-    emitAlloc name (ArrayType elementType (Just (fromIntegral (length expressions))))
-    emitAssignElements elementType ("%" <> name) expressions
-definitionToBlocks (Name name ty _) expression = do
+definitionToBlocks nameWithType (ArrayExpression expressions) =
+    case getType nameWithType of
+        ArrayType elementType _ -> do
+            let name = getInnerText nameWithType
+            emitAlloc name (ArrayType elementType (Just (fromIntegral (length expressions))))
+            emitAssignElements elementType ("%" <> name) expressions
+        _ -> fail ("Unexpected non-array type " <> show nameWithType)
+definitionToBlocks nameWithType expression = do
     -- The allocation for locals are not emitted here, but per function.
     -- This is necessary so that we do not keep reallocating,
     -- for example in a while-loop
+    let name = getInnerText nameWithType
+    let ty = getType nameWithType
     emitAlloc name ty
     val <- expressionToVal expression
     emitStore ty val ("%" <> name)
@@ -222,7 +232,7 @@ getAlignmentAsText ty = do
 
 findFields :: StructLookup -> Type -> TypeLookup
 findFields structEnv (Concrete structName []) =
-    case lookup (getTxt structName) structEnv of
+    case lookup (getText structName) structEnv of
         Nothing -> error ("Qbegen: Cannot get fields of struct " ++ show structName)
         Just fields -> fields
 findFields structEnv (PointerType innerTy) =
@@ -268,7 +278,7 @@ pointerSize = 8
 -- When are structs that big?
 getSize :: StructLookup -> Type -> Int32
 getSize structEnv (Concrete name []) =
-    case getTxt name of
+    case getText name of
         "bool" -> 1
         "char" -> 1
         "short" -> 2
@@ -298,7 +308,7 @@ getSize _ other = error ("Cannot determine size of type " ++ show other)
 -- This function is very similar to getSize, can the two be merged?
 getAlignment :: StructLookup -> Type -> Int32
 getAlignment structEnv (Concrete i []) =
-    case getTxt i of
+    case getText i of
         "bool" -> 1
         "char" -> 1
         "short" -> 2
@@ -322,9 +332,11 @@ getAlignment structEnv (Concrete i []) =
 getAlignment _ (PointerType _) = 8
 
 expressionToVal :: Expression -> Emit Val
-expressionToVal (Variable (Name "nullptr" _ _) []) =
+expressionToVal (Variable var []) | getInnerText var == "nullptr" =
     return "0"
-expressionToVal (Variable (Name name ty _) []) = do
+expressionToVal (Variable var []) = do
+    let name = getInnerText var
+    let ty = getType var
     wasParam <- isParam name
     wasGlobal <- isGlobal name
     let sigil = if wasGlobal then "$" else "%"
@@ -352,39 +364,43 @@ expressionToVal (SquareAccess expression accessor) = do
     emit (Instruction offsetVal pointerTy "add" [val, "%" <> mulVal])
 
     emitLoadOrVal elementType ("%" <> offsetVal)
-expressionToVal (DotAccess expression (Name fieldName fieldType _) []) = do
+expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     val <- expressionToVal expression
     let structType = readType expression
-    offset <- getOffset structType fieldName
+    offset <- getOffset structType (getText fieldName)
     offsetVal <- createOffsetVal offset val
     emitLoadOrVal fieldType offsetVal
 
 emitApply :: Expression -> [Expression] -> Emit Text
-emitApply (Variable (Name "cast" _ _) [targetType]) [parameter] = do
+emitApply (Variable name [targetType]) [parameter] | getInnerText name == "cast" = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
     emitCast parameterType targetType val
-emitApply (Variable (Name "sizeof" (FunctionType _ _) _) [typeParameter]) _ =
+emitApply (Variable name [typeParameter]) _ | getInnerText name == "sizeof" =
     getSizeAsVal typeParameter
-emitApply (Variable n@(Name _ (FunctionType structType _) _) []) expressions | isConstructor n = do
+emitApply (Variable n@(Name _ (FunctionType structType _)) []) expressions | isConstructor n = do
     ident <- newIdent ".local"
     emitAlloc ident structType
     emitAssignFields structType ("%" <> ident) expressions
     return ("%" <> ident)
 -- TODO try to combine the following cases if possible
-emitApply (Variable (Name name (FunctionType returnType parameterTypes) _) []) expressions = do
-    freshIdent <- newIdent ".local"
-    vals <- traverse expressionToVal expressions
-    let retTy = toQbeWordTy returnType
-    let parameterTys = fmap toQbeTy parameterTypes
-    let zipped = zip parameterTys vals
-    if isOperator name
-        then emitOperator freshIdent retTy name zipped
-        else do
-            wasGlobal <- isGlobal name
-            let sigil = if wasGlobal then "$" else "%"
-            emit (CallInstruction freshIdent retTy (sigil <> name) zipped)
-    return ("%" <> freshIdent)
+emitApply (Variable var []) expressions =
+    case getType var of
+        FunctionType returnType parameterTypes -> do
+            freshIdent <- newIdent ".local"
+            vals <- traverse expressionToVal expressions
+            let retTy = toQbeWordTy returnType
+            let parameterTys = fmap toQbeTy parameterTypes
+            let zipped = zip parameterTys vals
+            let name = getInnerText var
+            if isOperator name
+                then emitOperator freshIdent retTy name zipped
+                else do
+                    wasGlobal <- isGlobal name
+                    let sigil = if wasGlobal then "$" else "%"
+                    emit (CallInstruction freshIdent retTy (sigil <> name) zipped)
+            return ("%" <> freshIdent)
+        _ -> fail ("Unexpected non-function type " <> show var)
 -- TODO Should the following case be allowed? For example for currying?
 -- Probably not very interesting without closuses, but possible
 -- getCompare(compareOption)(a, b)
@@ -530,7 +546,7 @@ emitLoad ty val = do
 emitCast :: Type -> Type -> Text -> Emit Text
 emitCast (PointerType _) (PointerType _) val = return val
 emitCast (Concrete fromName []) targetType@(Concrete targetName []) val =
-    case (getTxt fromName, getTxt targetName) of
+    case (getText fromName, getText targetName) of
         (a, b) | a == b -> return val
         ("int", "uint") -> return val
         ("uint", "int") -> return val
@@ -649,7 +665,7 @@ toQbeWordTy ty = case toQbeTy ty of
 -- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
 toQbeTy (Concrete name []) =
-    case getTxt name of
+    case getText name of
         "bool" -> "ub"
         "char" -> "ub"
         "short" -> "sh"
@@ -702,20 +718,20 @@ moduleToQbe (Module name statements) = do
     let typeDefs = foldMap structToDef statements
     defs <- runReaderT (traverse statementToDef statements) baseEmitEnv
     createdStringDefs <- readIORef stringDefs
-    return (Mod (getTxt name) (typeDefs ++ createdStringDefs ++ concat defs))
+    return (Mod (getText name) (typeDefs ++ createdStringDefs ++ concat defs))
 
 -- Top level
 statementToDef :: Statement -> Emit [Def]
 statementToDef (Definition name e) = do
     items <- expressionToData e
-    return [DataDef (getText name) items]
+    return [DataDef (getInnerText name) items]
 statementToDef (FunctionDefintion name [] ty parameters statements) = do
-    let qbeParams = fmap (\param -> (toQbeTy (getType param), getText param)) parameters
+    let qbeParams = fmap (\param -> (toQbeTy (getType param), getInnerText param)) parameters
     let returnType = toQbeTy ty
     blocks <- withFreshEmitEnv (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing blocks
-    return [FuncDef returnType (getTxt name) qbeParams blocks']
+    return [FuncDef returnType (getText name) qbeParams blocks']
 statementToDef (ExternDefintion _ _ _) = return []
 statementToDef (StructDefinition _ _ _) = return []
 statementToDef s =
@@ -763,16 +779,16 @@ isJumpStatement _ = False
 
 structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
-    [TypeDef (getTxt ident) (fmap (toQbeStoreTy . getType) fields)]
+    [TypeDef (getText ident) (fmap (toQbeStoreTy . getType) fields)]
 structToDef _ = []
 
 gatherGlobalNames :: [Statement] -> [Text]
 gatherGlobalNames = foldMap gatherGlobalName
 
 gatherGlobalName :: Statement -> [Text]
-gatherGlobalName (Definition name _) = [getText name]
-gatherGlobalName (FunctionDefintion name _ _ _ _) = [getTxt name]
-gatherGlobalName (ExternDefintion name _ _) = [getTxt name]
+gatherGlobalName (Definition name _) = [getInnerText name]
+gatherGlobalName (FunctionDefintion name _ _ _ _) = [getText name]
+gatherGlobalName (ExternDefintion name _ _) = [getText name]
 gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann

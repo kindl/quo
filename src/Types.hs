@@ -19,8 +19,8 @@ emptyLocation :: Location
 emptyLocation = Location 0 0 0 0 ""
 
 data LocatedText = LocatedText {
-    getTxt :: Text,
-    getLoc :: Location
+    getText :: Text,
+    getLocation :: Location
 } deriving (Show, Data, Typeable)
 
 type ArraySize = Int32
@@ -76,7 +76,7 @@ doubleType :: Type
 doubleType = makePrimitiveType "double"
 
 nullptrType :: Type
-nullptrType = PointerType (makePrimitiveType "void")
+nullptrType = PointerType voidType
 
 usizeType :: Type
 usizeType = makePrimitiveType "usize"
@@ -89,7 +89,7 @@ isPrimitive ty = elem ty [boolType, charType,
 
 instance Eq Type where
     (==) (Concrete n1 ps1) (Concrete n2 ps2) =
-        getTxt n1 == getTxt n2 && ps1 == ps2
+        getText n1 == getText n2 && ps1 == ps2
     (==) (PointerType ty1) (PointerType ty2) =
         ty1 == ty2
     (==) (FunctionType returnTy1 tys1) (FunctionType returnTy2 tys2) =
@@ -127,10 +127,12 @@ operators = ["==", "<=", ">=", "!=", "&&", "||", "-_",
 
 
 data Name = Name {
-    getText :: Text,
-    getType :: Type,
-    getLocation :: Location
+    getLocatedText :: LocatedText,
+    getType :: Type
 } deriving (Show, Data, Typeable)
+
+getInnerText :: Name -> Text
+getInnerText = getText . getLocatedText
 
 -- Consider adding (Maybe Expression) for default parameters
 type Parameter = Name

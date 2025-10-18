@@ -65,7 +65,7 @@ conditionalOp =
 
 makeConditionalOp :: Expression -> LocatedText -> Maybe Expression -> Expression -> Expression
 makeConditionalOp a op thenBranch b =
-    Apply (Variable (Name "?:" auto (getLoc loc)) []) ([a] ++ maybe [] return thenBranch ++ [b])
+    Apply (Variable (Name (overwriteText "?:" op) auto) []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp :: Parser Expression
@@ -90,7 +90,7 @@ expoOp = liftA3 makeBinaryOp unOp (operator "^") expoOp <|> unOp
 
 makeBinaryOp :: Expression -> LocatedText -> Expression -> Expression
 makeBinaryOp a op b =
-    Apply (Variable (Name (getTxt op) auto (getLoc op)) []) [a, b]
+    Apply (Variable (Name op auto) []) [a, b]
 
 leftAssoc :: Alternative f => (t -> sep -> t -> t) -> f sep -> f t -> f t
 leftAssoc g op p =
@@ -109,7 +109,7 @@ unaryMinus = do
 
 makeUnaryOp :: LocatedText -> Expression -> Expression
 makeUnaryOp op a =
-    Apply (Variable (Name (getTxt op) auto (getLoc op)) []) [a]
+    Apply (Variable (Name op auto) []) [a]
 
 templateString :: Parser Expression
 templateString = do
@@ -118,7 +118,8 @@ templateString = do
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    return (Apply (Variable (Name "format" auto emptyLocation) []) [parameter1, parameter2])
+    -- TODO add location
+    return (Apply (Variable (Name (LocatedText "format" emptyLocation) auto) []) [parameter1, parameter2])
 
 templateStringMid :: Parser Expression
 templateStringMid = do
@@ -156,7 +157,7 @@ primaryExpression =
 
 -- a.b
 dotAcces :: Parser (Expression -> Expression)
-dotAcces = liftA2 (\i ts e -> DotAccess e (Name (getTxt i) auto (getLoc i)) ts)
+dotAcces = liftA2 (\i ts e -> DotAccess e (Name i auto) ts)
     (token "." *> identifier)
     (option [] typeParameters)
 
@@ -172,7 +173,7 @@ parameterList = fmap (flip Apply) (parens (sepByTrailing expr (token ",")))
 
 variable :: Parser Expression
 variable =
-    liftA2 (\i ts -> Variable (Name (getTxt i) auto (getLoc i)) ts) identifier (option [] typeParameters)
+    liftA2 (\i ts -> Variable (Name i auto) ts) identifier (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer :: Parser Int32

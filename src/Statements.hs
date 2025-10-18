@@ -61,7 +61,7 @@ forStatement = do
     _ <- token "for"
     (i, ty, e) <- parens forPart
     body <- curlies statements
-    return (For (Name (getTxt i) ty (getLoc i)) e body)
+    return (For (Name i ty) e body)
 
 continueStatement :: Parser Statement
 continueStatement = do
@@ -104,7 +104,7 @@ switchOptions =
 
 definition :: Parser Statement
 definition =
-    liftA3 (\ty i e -> Definition (Name (getTxt i) ty (getLoc i)) e) typeOrLet identifier (token "=" *> expr <* token ";")
+    liftA3 (\ty i e -> Definition (Name i ty) e) typeOrLet identifier (token "=" *> expr <* token ";")
 
 typeOrLet :: Parser Type
 typeOrLet = (token "let" $> auto) <|> typeOrAuto
@@ -130,7 +130,7 @@ functionDefintion = do
     return (FunctionDefintion i ts t params body)
 
 parameter :: Parser Name
-parameter = liftA2 (\ty i -> Name (getTxt i) ty (getLoc i)) typeVariable identifier
+parameter = liftA2 (\ty i -> Name i ty) typeVariable identifier
 
 ifStatement :: Parser Statement
 ifStatement = do

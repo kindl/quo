@@ -2,7 +2,7 @@
 module Cgen(prettyC) where
 
 import Types
-import Data.Text(pack)
+import Data.Text(Text, pack)
 import Prettyprinter(Doc, (<+>), parens)
 import Helpers((<//>),
     intercalate, fromText, fromLocatedText,
@@ -68,15 +68,15 @@ printBlock sts = "{"
 -- for example array size specifier come after the identifier in C:
 -- int numbers[3]; instead of int[3] numbers;
 nameToC :: Name -> Doc ann
-nameToC (Name name (ArrayType ty maybeSize) loc) =
+nameToC (Name name (ArrayType ty maybeSize)) =
     -- Call recursively to handle array of arrays
-    nameToC (Name name ty loc) <> (case maybeSize of
+    nameToC (Name name ty) <> (case maybeSize of
         Nothing -> "[]"
         Just size -> "[" <> fromText (pack (show size)) <> "]")
-nameToC (Name name (FunctionType returnType parameterTypes) _) =
-    typeToC returnType <+> parens ("*" <+> fromText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
-nameToC (Name name ty _) =
-    typeToC ty <+> fromText name
+nameToC (Name name (FunctionType returnType parameterTypes)) =
+    typeToC returnType <+> parens ("*" <+> fromLocatedText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
+nameToC (Name name ty) =
+    typeToC ty <+> fromLocatedText name
 
 fieldToC :: Name -> Doc ann
 fieldToC name = nameToC name <> ";"
@@ -87,14 +87,14 @@ expressionToC (Variable name typeParameters) =
     error ("Unexpected variable " ++ show name ++ " with type paramers " ++ show typeParameters)
 expressionToC (Literal l) = literalToC l
 -- Operators
-expressionToC (Apply (Variable (Name "cast" _ _) [ty]) [expression]) =
+expressionToC (Apply (Variable name [ty]) [expression]) | getInnerText name == "cast" =
     parens (parens (typeToC ty) <> expressionToC expression)
-expressionToC (Apply (Variable (Name "sizeof" _ _) [ty]) []) =
+expressionToC (Apply (Variable name [ty]) []) | getInnerText name == "sizeof" =
     "sizeof" <> parens (typeToC ty)
-expressionToC (Apply (Variable (Name v _ _) _) [e1, e2]) | isOperator v =
-    parensWrapped e1 <+> fromText v <+> parensWrapped e2
-expressionToC (Apply (Variable n@(Name v _ _) _) es) | isConstructor n =
-    parens ("struct" <+> fromText v)
+expressionToC (Apply (Variable name _) [e1, e2]) | isOperator (getInnerText name) =
+    parensWrapped e1 <+> fromName name <+> parensWrapped e2
+expressionToC (Apply (Variable name _) es) | isConstructor name =
+    parens ("struct" <+> fromName name)
         <> "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 expressionToC (Apply e es) = expressionToC e <> parens (intercalate ", " (fmap expressionToC es))
 expressionToC (DotAccess e name []) =
@@ -107,7 +107,7 @@ expressionToC (ArrayExpression es) =
     "{" <> intercalate ", " (fmap expressionToC es) <> "}"
 
 fromName :: Name -> Doc a
-fromName name = fromText (getText name)
+fromName name = fromText (getInnerText name)
 
 literalToC :: Literal -> Doc a
 literalToC (Int32 l) = fromText (pack (show l))
@@ -124,7 +124,7 @@ literalToC (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
 parensWrapped :: Expression -> Doc a
 parensWrapped e =
     case e of
-        (Apply (Variable name _) _) | isOperator (getText name) ->
+        Apply (Variable name _) _ | isOperator (getInnerText name) ->
             parens (expressionToC e)
         _ -> expressionToC e
 
@@ -134,10 +134,11 @@ typeToC (PointerType t) =
 typeToC (FunctionType returnType parameterTypes) =
     typeToC returnType <+> parens "*" <> parens (intercalate ", " (fmap typeToC parameterTypes))
 typeToC (Concrete name []) =
-    concreteTypeToC (getTxt name)
+    concreteTypeToC (getText name)
 typeToC other =
     error ("Cannot print type of " ++ show other)
 
+concreteTypeToC :: Text -> Doc a
 concreteTypeToC "void" = "void"
 concreteTypeToC "bool" = "bool"
 concreteTypeToC "char" = "char"

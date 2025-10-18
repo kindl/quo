@@ -4,7 +4,7 @@ module Helpers where
 import Data.Text(Text, replace)
 import Prettyprinter(Doc, pretty, line, vcat, indent, layoutPretty, defaultLayoutOptions)
 import Prettyprinter.Render.Text(renderStrict)
-import Types(Name(..), Type(..), Location, LocatedText(..))
+import Types(Name(..), Type(..), LocatedText(..), getInnerText)
 
 
 escape :: Text -> Text
@@ -21,7 +21,7 @@ fromText :: Text -> Doc a
 fromText = pretty
 
 fromLocatedText :: LocatedText -> Doc a
-fromLocatedText = pretty . getTxt
+fromLocatedText = pretty . getText
 
 overwriteText :: Text -> LocatedText -> LocatedText
 overwriteText txt (LocatedText _ loc) = LocatedText txt loc
@@ -46,15 +46,15 @@ infixr 6 <//>
 toText :: Doc ann -> Text
 toText d = renderStrict (layoutPretty defaultLayoutOptions d)
 
-find :: (MonadFail m, Show result) => Text -> Location -> [(Text, result)] -> m result
-find name loc env = case lookup name env of
+find :: (MonadFail m, Show result) => LocatedText -> [(Text, result)] -> m result
+find name env = case lookup (getText name) env of
     Nothing ->
-        fail ("Cannot find name " ++ show name ++ " " ++ show loc ++ " in env " ++ show env)
+        fail ("Cannot find name " ++ show name ++ " in env " ++ show env)
     Just found -> return found
 
 isConstructor :: Name -> Bool
 isConstructor name =
     case getType name of
         FunctionType (Concrete structName []) _ ->
-            getText name == getTxt structName
+            getInnerText name == getText structName
         _ -> False
