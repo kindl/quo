@@ -18,59 +18,68 @@ data Location = Location {
 emptyLocation :: Location
 emptyLocation = Location 0 0 0 0 ""
 
+data LocatedText = LocatedText {
+    getTxt :: Text,
+    getLoc :: Location
+} deriving (Show, Data, Typeable)
+
 type ArraySize = Int32
 
 data Type =
-    Concrete Text [Type]
+    Concrete LocatedText [Type]
     | ArrayType Type (Maybe ArraySize)
     | FunctionType ReturnType [Type]
     | PointerType Type
-        deriving (Eq, Show, Data, Typeable)
+        deriving (Show, Data, Typeable)
+
+makePrimitiveType :: Text -> Type
+makePrimitiveType t =
+    Concrete (LocatedText t emptyLocation) []
 
 auto :: Type
-auto = Concrete "auto" []
+auto = makePrimitiveType "auto"
 
 voidType :: Type
-voidType = Concrete "void" []
+voidType = makePrimitiveType "void"
 
 boolType :: Type
-boolType = Concrete "bool" []
+boolType = makePrimitiveType "bool"
 
 stringType :: Type
-stringType = Concrete "string" []
+stringType = makePrimitiveType "string"
 
 charType :: Type
-charType = Concrete "char" []
+charType = makePrimitiveType "char"
 
 shortType :: Type
-shortType = Concrete "short" []
+shortType = makePrimitiveType "short"
 
 ushortType :: Type
-ushortType = Concrete "ushort" []
+ushortType = makePrimitiveType "ushort"
 
 intType :: Type
-intType = Concrete "int" []
+intType = makePrimitiveType "int"
 
 uintType :: Type
-uintType = Concrete "uint" []
+uintType = makePrimitiveType "uint"
 
 longType :: Type
-longType = Concrete "long" []
+longType = makePrimitiveType "long"
 
 ulongType :: Type
-ulongType = Concrete "ulong" []
+ulongType = makePrimitiveType "ulong"
 
 floatType :: Type
-floatType = Concrete "float" []
+floatType = makePrimitiveType "float"
 
 doubleType :: Type
-doubleType = Concrete "double" []
+doubleType = makePrimitiveType "double"
 
 nullptrType :: Type
-nullptrType = PointerType (Concrete "void" [])
+nullptrType = PointerType (makePrimitiveType "void")
 
 usizeType :: Type
-usizeType = Concrete "usize" []
+usizeType = makePrimitiveType "usize"
 
 isPrimitive :: Type -> Bool
 isPrimitive ty = elem ty [boolType, charType,
@@ -78,10 +87,20 @@ isPrimitive ty = elem ty [boolType, charType,
     longType, ulongType, floatType, doubleType,
     usizeType]
 
+instance Eq Type where
+    (==) (Concrete n1 ps1) (Concrete n2 ps2) =
+        getTxt n1 == getTxt n2 && ps1 == ps2
+    (==) (PointerType ty1) (PointerType ty2) =
+        ty1 == ty2
+    (==) (FunctionType returnTy1 tys1) (FunctionType returnTy2 tys2) =
+        returnTy1 == returnTy2 && tys1 == tys2
+    (==) (ArrayType ty1 maybeSize1) (ArrayType ty2 maybeSize2) =
+        ty1 == ty2 && maybeSize1 == maybeSize2
+    (==) _ _ = False
+
 isPointerType :: Type -> Bool
 isPointerType (PointerType _) = True
-isPointerType (Concrete "string" []) = True
-isPointerType _ = False
+isPointerType ty = ty == stringType
 
 isFunctionType :: Type -> Bool
 isFunctionType (FunctionType _ _) = True
@@ -91,14 +110,13 @@ makeFunctionType :: ReturnType -> [Parameter] -> Type
 makeFunctionType returnType parameters =
     FunctionType returnType (fmap getType parameters)
 
-makeConcrete :: Text -> [ReturnType] -> Type
-makeConcrete "Fn" typeParameters =
+makeType :: LocatedText -> [ReturnType] -> Type
+makeType (LocatedText "Fn" _) typeParameters =
     FunctionType (last typeParameters) (init typeParameters)
-makeConcrete "Pointer" [typeParameter] =
+makeType (LocatedText "Pointer" _) [typeParameter] =
     PointerType typeParameter
-makeConcrete name typeParameters =
-    Concrete name typeParameters
-
+makeType locatedText typeParameters =
+    Concrete locatedText typeParameters
 
 isOperator :: Text -> Bool
 isOperator x = elem x operators
@@ -117,23 +135,23 @@ data Name = Name {
 -- Consider adding (Maybe Expression) for default parameters
 type Parameter = Name
 
-type TypeParameter = Text
+type TypeParameter = LocatedText
 
 type ReturnType = Type
 
-data Module = Module Text [Statement]
+data Module = Module LocatedText [Statement]
     deriving (Show, Data, Typeable)
 
 data Statement =
     Definition Name Expression
-    | FunctionDefintion Text [TypeParameter] ReturnType [Parameter] [Statement]
-    | ExternDefintion Text ReturnType [Parameter]
-    | StructDefinition Text [TypeParameter] [Parameter]
+    | FunctionDefintion LocatedText [TypeParameter] ReturnType [Parameter] [Statement]
+    | ExternDefintion LocatedText ReturnType [Parameter]
+    | StructDefinition LocatedText [TypeParameter] [Parameter]
     | Call Expression
     | Assignment Expression Expression
     | If [(Expression, [Statement])] (Maybe [Statement])
     | Return (Maybe Expression)
-    | Import Text (Maybe [Text])
+    | Import LocatedText (Maybe [LocatedText])
     | For Name Expression [Statement]
     | While Expression [Statement]
     | Switch Expression [(Expression, [Statement])]

@@ -75,7 +75,8 @@ emitAlloc :: Text -> Type -> Emit ()
 emitAlloc name ty = do
     ref <- asks getAllocs
     size <- getSizeAsVal ty
-    let instruction = Instruction name pointerTy ("alloc" <> getAlignmentAsText ty) [size]
+    alignment <- getAlignmentAsText ty
+    let instruction = Instruction name pointerTy ("alloc" <> alignment) [size]
     lift (modifyIORef' ref (\instructions -> instructions ++ [instruction]))
 
 withParameters :: [Text] -> Emit a -> Emit a
@@ -213,30 +214,15 @@ getSizeAsVal ty = do
 
 -- This does not produce a val,
 -- it is necessary for instruction names alloc4 alloc8 etc.
-getAlignmentAsText :: Type -> Text
-getAlignmentAsText ty = pack (show (getAlignment ty))
-
-getAlignment :: Type -> Int32
-getAlignment (Concrete "char" []) = 1
-getAlignment (Concrete "short" []) = 2
-getAlignment (Concrete "ushort" []) = 2
-getAlignment (Concrete "int" []) = 4
-getAlignment (Concrete "uint" []) = 4
-getAlignment (Concrete "long" []) = 8
-getAlignment (Concrete "ulong" []) = 8
-getAlignment (Concrete "float" []) = 4
-getAlignment (Concrete "double" []) = 8
-getAlignment (Concrete "usize" []) = 8
-getAlignment (Concrete "string" []) = 8
-getAlignment (PointerType _) = 8
--- TODO allow setting alignment of structs or getting default alignment,
--- e.g. qbe uses the max alginment of the fields
-getAlignment _ = 4
---getAlignment other = error ("Cannot get alignment of " ++ show other)
+getAlignmentAsText :: Type -> Emit Text
+getAlignmentAsText ty = do
+    structEnv <- asks getStructs
+    let alignment = getAlignment structEnv ty
+    return (pack (show alignment))
 
 findFields :: StructLookup -> Type -> TypeLookup
 findFields structEnv (Concrete structName []) =
-    case lookup structName structEnv of
+    case lookup (getTxt structName) structEnv of
         Nothing -> error ("Qbegen: Cannot get fields of struct " ++ show structName)
         Just fields -> fields
 findFields structEnv (PointerType innerTy) =
@@ -278,32 +264,62 @@ annotateOffsets' structEnv current ((fieldName, ty):fields) =
 pointerSize :: Int32
 pointerSize = 8
 
--- TODO does the return need to be Word64?
+-- TODO do we need to return Word64?
 -- When are structs that big?
 getSize :: StructLookup -> Type -> Int32
-getSize _ (Concrete "bool" []) = 1
-getSize _ (Concrete "char" []) = 1
-getSize _ (Concrete "short" []) = 2
-getSize _ (Concrete "ushort" []) = 2
-getSize _ (Concrete "int" []) = 4
-getSize _ (Concrete "uint" []) = 4
-getSize _ (Concrete "long" []) = 8
-getSize _ (Concrete "ulong" []) = 8
-getSize _ (Concrete "float" []) = 4
-getSize _ (Concrete "double" []) = 8
-getSize _ (Concrete "usize" []) = 8
-getSize _ (Concrete "string" []) = pointerSize
-getSize _ (PointerType _) = pointerSize
+getSize structEnv (Concrete name []) =
+    case getTxt name of
+        "bool" -> 1
+        "char" -> 1
+        "short" -> 2
+        "ushort" -> 2
+        "int" -> 4
+        "uint" -> 4
+        "long" -> 8
+        "ulong" -> 8
+        "float" -> 4
+        "double" -> 8
+        "usize" -> 8
+        "string" -> pointerSize
+        structName ->
+            case lookup structName structEnv of
+                Nothing ->
+                    error ("Cannot determine size of type " ++ show structName
+                        ++ " because it was not in the environment" ++ show structEnv)
+                Just fields ->
+                    let sizes = fmap (getSize structEnv . snd) fields
+                    in sum sizes
 getSize structEnv (ArrayType ty (Just arraySize)) =
     let elementSize = getSize structEnv ty
     in elementSize * arraySize
-getSize structEnv ty@(Concrete structName []) =
-    case lookup structName structEnv of
-        Nothing -> error ("Cannot determine size of type " ++ show ty ++ " because it was not in the environment" ++ show structEnv)
-        Just fields ->
-            let sizes = fmap (getSize structEnv . snd) fields
-            in sum sizes
+getSize _ (PointerType _) = pointerSize
 getSize _ other = error ("Cannot determine size of type " ++ show other)
+
+-- This function is very similar to getSize, can the two be merged?
+getAlignment :: StructLookup -> Type -> Int32
+getAlignment structEnv (Concrete i []) =
+    case getTxt i of
+        "bool" -> 1
+        "char" -> 1
+        "short" -> 2
+        "ushort" -> 2
+        "int" -> 4
+        "uint" -> 4
+        "long" -> 8
+        "ulong" -> 8
+        "float" -> 4
+        "double" -> 8
+        "usize" -> 8
+        "string" -> 8
+        structName ->
+            case lookup structName structEnv of
+                Nothing ->
+                    error ("Cannot determine alignment of type " ++ show structName
+                        ++ " because it was not in the environment" ++ show structEnv)
+                Just fields ->
+                    let alignments = fmap (getAlignment structEnv . snd) fields
+                    in maximum alignments
+getAlignment _ (PointerType _) = 8
 
 expressionToVal :: Expression -> Emit Val
 expressionToVal (Variable (Name "nullptr" _ _) []) =
@@ -512,81 +528,84 @@ emitLoad ty val = do
 
 -- TODO remove overlap by finding general rules
 emitCast :: Type -> Type -> Text -> Emit Text
-emitCast parameterType targetType val | parameterType == targetType = return val
 emitCast (PointerType _) (PointerType _) val = return val
-emitCast (Concrete "int" []) (Concrete "uint" []) val = return val
-emitCast (Concrete "uint" []) (Concrete "int" []) val = return val
-emitCast (Concrete "int" []) (Concrete "ushort" []) val = return val
-emitCast (Concrete "int" []) (Concrete "short" []) val = return val
-emitCast (Concrete "int" []) (Concrete "char" []) val = return val
-emitCast (Concrete "ulong" []) (Concrete "int" []) val = return val
-emitCast (Concrete "int" []) (Concrete "ulong" []) val = return val
-emitCast (Concrete "long" []) (Concrete "int" []) val = return val
-emitCast (Concrete "ulong" []) (Concrete "long" []) val = return val
-emitCast (Concrete "long" []) (Concrete "ulong" []) val = return val
--- TODO these probably work on smaller types, e.g. char to long
-emitCast (Concrete "uint" []) (Concrete "long" []) val = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "l" "extuw" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "int" []) (Concrete "long" []) val = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "l" "extsw" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "char" []) targetType val | isIntegerType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "extub" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "ushort" []) targetType val | isIntegerType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "extuh" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "short" []) targetType val | isIntegerType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "extsh" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "int" []) targetType val | isFloatingType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "swtof" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "uint" []) targetType val | isFloatingType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "uwtof" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "long" []) targetType val | isFloatingType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "sltof" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "ulong" []) targetType val | isFloatingType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "ultof" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "float" []) (Concrete "double" []) val = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "d" "exts" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "double" []) (Concrete "float" []) val = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent "s" "truncd" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "double" []) targetType val | isIntegerType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "dtosi" [val])
-    return ("%" <> freshIdent)
-emitCast (Concrete "float" []) targetType val | isIntegerType targetType = do
-    freshIdent <- newIdent ".local"
-    emit (Instruction freshIdent (toQbeTy targetType) "stosi" [val])
-    return ("%" <> freshIdent)
+emitCast (Concrete fromName []) targetType@(Concrete targetName []) val =
+    case (getTxt fromName, getTxt targetName) of
+        (a, b) | a == b -> return val
+        ("int", "uint") -> return val
+        ("uint", "int") -> return val
+        ("int", "ushort") -> return val
+        ("int", "short") -> return val
+        ("int", "char") -> return val
+        ("ulong", "int") -> return val
+        ("int", "ulong") -> return val
+        ("long", "int") -> return val
+        ("ulong", "long") -> return val
+        ("long", "ulong") -> return val
+        -- TODO these probably work on smaller types, e.g. char to long
+        ("uint", "long") -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent "l" "extuw" [val])
+            return ("%" <> freshIdent)
+        ("int", "long") -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent "l" "extsw" [val])
+            return ("%" <> freshIdent)
+        ("char", _) | isIntegerType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "extub" [val])
+            return ("%" <> freshIdent)
+        ("ushort", _) | isIntegerType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "extuh" [val])
+            return ("%" <> freshIdent)
+        ("short", _) | isIntegerType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "extsh" [val])
+            return ("%" <> freshIdent)
+        ("int", _) | isFloatingType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "swtof" [val])
+            return ("%" <> freshIdent)
+        ("uint", _) | isFloatingType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "uwtof" [val])
+            return ("%" <> freshIdent)
+        ("long", _) | isFloatingType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "sltof" [val])
+            return ("%" <> freshIdent)
+        ("ulong", _) | isFloatingType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "ultof" [val])
+            return ("%" <> freshIdent)
+        ("float", "double") -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent "d" "exts" [val])
+            return ("%" <> freshIdent)
+        ("double", "float") -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent "s" "truncd" [val])
+            return ("%" <> freshIdent)
+        ("double", _) | isIntegerType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "dtosi" [val])
+            return ("%" <> freshIdent)
+        ("float", _) | isIntegerType targetType -> do
+            freshIdent <- newIdent ".local"
+            emit (Instruction freshIdent (toQbeTy targetType) "stosi" [val])
+            return ("%" <> freshIdent)
 emitCast parameterType targetType _ =
     fail ("Conversion from " ++ show parameterType ++ " to "
         ++ show targetType ++ " not implemented yet")
 
 isFloatingType :: Type -> Bool
-isFloatingType ty = doubleType == ty || floatType == ty
+isFloatingType ty =
+    elem ty [doubleType, floatType]
 
 isIntegerType :: Type -> Bool
-isIntegerType ty = charType == ty || shortType == ty || ushortType == ty
-    || intType == ty || uintType == ty || longType == ty || ulongType == ty
+isIntegerType ty =
+    elem ty [charType, shortType, ushortType, intType, uintType, longType, ulongType]
 
 literalToVal :: Literal -> Emit Val
 literalToVal (StringLiteral str) = registerConstant str
@@ -629,27 +648,29 @@ toQbeWordTy ty = case toQbeTy ty of
 
 -- Used for variables, smaller and unsigned types just fall back to w
 toQbeTy :: Type -> Ty
-toQbeTy (Concrete "bool" []) = "ub"
-toQbeTy (Concrete "char" []) = "ub"
-toQbeTy (Concrete "short" []) = "sh"
-toQbeTy (Concrete "ushort" []) = "uh"
-toQbeTy (Concrete "int" []) = "w"
--- loadw can be used insted of loaduw because signed does not matter
-toQbeTy (Concrete "uint" []) = "w"
-toQbeTy (Concrete "long" []) = "l"
-toQbeTy (Concrete "ulong" []) = "l"
-toQbeTy (Concrete "usize" []) = "l"
-toQbeTy (Concrete "float" []) = "s"
-toQbeTy (Concrete "double" []) = "d"
--- void type is just left empty for functions
-toQbeTy (Concrete "void" []) = voidTy
-toQbeTy (Concrete "string" []) = pointerTy
+toQbeTy (Concrete name []) =
+    case getTxt name of
+        "bool" -> "ub"
+        "char" -> "ub"
+        "short" -> "sh"
+        "ushort" -> "uh"
+        "int" -> "w"
+        -- loadw can be used insted of loaduw because signed does not matter
+        "uint" -> "w"
+        "long" -> "l"
+        "ulong" -> "l"
+        "usize" -> "l"
+        "float" -> "s"
+        "double" -> "d"
+        -- void type is just left empty for functions
+        "void" -> voidTy
+        "string" -> pointerTy
+        "auto" -> error "Error: auto appeared in printing stage"
+        s -> ":" <> s
 toQbeTy (PointerType _) = pointerTy
 -- TODO how to handle array types? always decay to pointer?
 toQbeTy (ArrayType _ _) = pointerTy
 toQbeTy (FunctionType _ _) = pointerTy
-toQbeTy (Concrete "auto" []) = error "Error: auto appeared in printing stage"
-toQbeTy (Concrete s []) = ":" <> s
 toQbeTy other =
     error ("Error: generic or function type " ++ show other ++ " appeared in printing stage")
 
@@ -681,7 +702,7 @@ moduleToQbe (Module name statements) = do
     let typeDefs = foldMap structToDef statements
     defs <- runReaderT (traverse statementToDef statements) baseEmitEnv
     createdStringDefs <- readIORef stringDefs
-    return (Mod name (typeDefs ++ createdStringDefs ++ concat defs))
+    return (Mod (getTxt name) (typeDefs ++ createdStringDefs ++ concat defs))
 
 -- Top level
 statementToDef :: Statement -> Emit [Def]
@@ -694,7 +715,7 @@ statementToDef (FunctionDefintion name [] ty parameters statements) = do
     blocks <- withFreshEmitEnv (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing blocks
-    return [FuncDef returnType name qbeParams blocks']
+    return [FuncDef returnType (getTxt name) qbeParams blocks']
 statementToDef (ExternDefintion _ _ _) = return []
 statementToDef (StructDefinition _ _ _) = return []
 statementToDef s =
@@ -742,7 +763,7 @@ isJumpStatement _ = False
 
 structToDef :: Statement -> [Def]
 structToDef (StructDefinition ident [] fields) =
-    [TypeDef ident (fmap (toQbeStoreTy . getType) fields)]
+    [TypeDef (getTxt ident) (fmap (toQbeStoreTy . getType) fields)]
 structToDef _ = []
 
 gatherGlobalNames :: [Statement] -> [Text]
@@ -750,8 +771,8 @@ gatherGlobalNames = foldMap gatherGlobalName
 
 gatherGlobalName :: Statement -> [Text]
 gatherGlobalName (Definition name _) = [getText name]
-gatherGlobalName (FunctionDefintion name _ _ _ _) = [name]
-gatherGlobalName (ExternDefintion name _ _) = [name]
+gatherGlobalName (FunctionDefintion name _ _ _ _) = [getTxt name]
+gatherGlobalName (ExternDefintion name _ _) = [getTxt name]
 gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann

@@ -4,7 +4,7 @@ module Helpers where
 import Data.Text(Text, replace)
 import Prettyprinter(Doc, pretty, line, vcat, indent, layoutPretty, defaultLayoutOptions)
 import Prettyprinter.Render.Text(renderStrict)
-import Types(Name(..), Type(Concrete, FunctionType), Location)
+import Types(Name(..), Type(..), Location, LocatedText(..))
 
 
 escape :: Text -> Text
@@ -19,6 +19,12 @@ escape = replace "\0" "\\0"
 -- Helper functions for pretty printing
 fromText :: Text -> Doc a
 fromText = pretty
+
+fromLocatedText :: LocatedText -> Doc a
+fromLocatedText = pretty . getTxt
+
+overwriteText :: Text -> LocatedText -> LocatedText
+overwriteText txt (LocatedText _ loc) = LocatedText txt loc
 
 intercalate :: Text -> [Doc ann] -> Doc ann
 intercalate _ [] = mempty
@@ -50,5 +56,5 @@ isConstructor :: Name -> Bool
 isConstructor name =
     case getType name of
         FunctionType (Concrete structName []) _ ->
-            getText name == structName
+            getText name == getTxt structName
         _ -> False

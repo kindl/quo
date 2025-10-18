@@ -75,10 +75,12 @@ resolveTop (FunctionDefintion text typeParameters returnType parameters body) = 
     resolved <- with (fmap nameToPair parameters) (resolveStatements body)
     let returnTypes = fmap getReturnType (getReturns resolved)
     when (null returnTypes && returnType /= voidType)
-        (fail ("Function " ++ show text ++ " has return type " ++ show returnType ++ " but does not have a return statement"))
+        (fail ("Function " ++ show text ++ " has return type " ++ show returnType
+            ++ " but does not have a return statement"))
 
     when (not (all (\x -> subsumes x returnType) returnTypes))
-        (fail ("Function " ++ show text ++ " return types " ++ show returnTypes ++ " do not fit annotated return type " ++ show returnType))
+        (fail ("Function " ++ show text ++ " return types " ++ show returnTypes
+            ++ " do not fit annotated return type " ++ show returnType))
 
     return (FunctionDefintion text typeParameters returnType parameters resolved)
 resolveTop d@(ExternDefintion _ _ _) = return d
@@ -125,7 +127,7 @@ resolveDefinition _ (Definition (Name name annotatedType loc) value) rest = do
     resolved <- resolveExpression value annotatedType
     -- If the type was inferred, replace with the result type, otherwise leave it
     let newType = if annotatedType == auto then readType resolved else annotatedType
-    rest' <- with (entry name newType) rest
+    rest' <- with (entry' name newType) rest
     return (Definition (Name name newType loc) resolved : rest')
 resolveDefinition f statement rest = do
     resolved <- f statement
@@ -150,7 +152,7 @@ resolveStatement (While condition statements) =
 resolveStatement (For (Name name annotatedType loc) expression statements) = do
     resolvedExpression <- resolveExpression expression (ArrayType annotatedType Nothing)
     let (ArrayType elementType _) = readType resolvedExpression
-    resolvedStatements <- with (entry name elementType) (resolveStatements statements)
+    resolvedStatements <- with (entry' name elementType) (resolveStatements statements)
     return (For (Name name elementType loc) resolvedExpression resolvedStatements)
 resolveStatement (Switch expression branches) = do
     resolvedExpression <- resolveExpression expression auto
@@ -169,8 +171,11 @@ resolveBranch conditionType (condition, statements) =
 nameToPair :: Name -> (Text, Type)
 nameToPair name = (getText name, getType name)
 
-entry :: Text -> Type -> TypeLookup
-entry text value = [(text, value)]
+entry :: LocatedText -> Type -> TypeLookup
+entry text value = entry' (getTxt text) value
+
+entry' :: Text -> Type -> TypeLookup
+entry' text value = [(text, value)]
 
 gatherAnnotations :: [Statement] -> TypeLookup
 gatherAnnotations = foldMap gatherAnnotation
@@ -190,7 +195,7 @@ gatherStructs = foldMap gatherStruct
 
 gatherStruct :: Statement -> StructLookup
 gatherStruct (StructDefinition text [] parameters) =
-    [(text, fmap nameToPair parameters)]
+    [(getTxt text, fmap nameToPair parameters)]
 gatherStruct _ = mempty
 
 readType :: Expression -> Type
@@ -292,7 +297,7 @@ substitute :: Data a => [(Text, Type)] -> a -> a
 substitute substitution m =
     let
         f t@(Concrete v []) =
-            fromMaybe t (lookup v substitution)
+            fromMaybe t (lookup (getTxt v) substitution)
         f t = t
     in transformBi f m
 
@@ -327,7 +332,7 @@ subsumes a b = a == b
 findFields :: Type -> Resolve TypeLookup
 findFields (Concrete structName []) = do
     structEnv <- getStructEnv
-    find structName emptyLocation structEnv
+    find (getTxt structName) emptyLocation structEnv
 findFields (PointerType innerTy) =
     findFields innerTy
 findFields ty =

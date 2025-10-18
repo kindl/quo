@@ -6,12 +6,11 @@ import Control.Applicative((<|>), optional, many, liftA2, liftA3)
 import Data.Attoparsec.Combinator(option)
 import Types
 import Expressions
-import Data.Text(Text)
 
 
 moduleDefinition :: Parser Module
 moduleDefinition = do
-    m <- option "main" (token "module" *> identifier <* token ";")
+    m <- option (LocatedText "main" emptyLocation) (token "module" *> identifier <* token ";")
     s <- statements
     return (Module m s)
 
@@ -60,9 +59,9 @@ externDefinition = do
 forStatement :: Parser Statement
 forStatement = do
     _ <- token "for"
-    (i, loc, ty, e) <- parens forPart
+    (i, ty, e) <- parens forPart
     body <- curlies statements
-    return (For (Name i ty loc) e body)
+    return (For (Name (getTxt i) ty (getLoc i)) e body)
 
 continueStatement :: Parser Statement
 continueStatement = do
@@ -83,9 +82,9 @@ whileStatement = do
     body <- curlies statements
     return (While e body)
 
-forPart :: Parser (Text, Location, Type, Expression)
+forPart :: Parser (LocatedText, Type, Expression)
 forPart =
-    liftA3 (\ty (i, loc) e -> (i, loc, ty, e)) typeOrLet identifierWithLocation (token "in" *> expr)
+    liftA3 (\ty i e -> (i, ty, e)) typeOrLet identifier (token "in" *> expr)
 
 -- Consider turning switch into expression
 -- The problem is, that this creates a circle:
@@ -105,7 +104,7 @@ switchOptions =
 
 definition :: Parser Statement
 definition =
-    liftA3 (\ty (i, loc) e -> Definition (Name i ty loc) e) typeOrLet identifierWithLocation (token "=" *> expr <* token ";")
+    liftA3 (\ty i e -> Definition (Name (getTxt i) ty (getLoc i)) e) typeOrLet identifier (token "=" *> expr <* token ";")
 
 typeOrLet :: Parser Type
 typeOrLet = (token "let" $> auto) <|> typeOrAuto
@@ -131,7 +130,7 @@ functionDefintion = do
     return (FunctionDefintion i ts t params body)
 
 parameter :: Parser Name
-parameter = liftA2 (\ty (i, loc) -> Name i ty loc) typeVariable identifierWithLocation
+parameter = liftA2 (\ty i -> Name (getTxt i) ty (getLoc i)) typeVariable identifier
 
 ifStatement :: Parser Statement
 ifStatement = do

@@ -9,6 +9,7 @@ import Platte(transformBiM)
 import Resolver(substitute, zipTypeParameters)
 import Data.List(partition, nub)
 import Data.Text(Text)
+import Helpers(overwriteText)
 
 
 -- * grab all generic function and struct definitions
@@ -74,13 +75,13 @@ specialize m =
 
         g ty@(Concrete _ []) =
             return ty
-        g ty@(Concrete name _) | isSpecial name =
+        g ty@(Concrete name _) | isSpecial (getTxt name) =
             return ty
         g (Concrete name typeParameters) = do
-            let concreteName = concretize name typeParameters
-            ensureInstance name typeParameters
+            let concreteName = concretize (getTxt name) typeParameters
+            ensureInstance (getTxt name) typeParameters
             lift (putStrLn ("Ensure type specialization " ++ show concreteName ++ " " ++ show (name, typeParameters)))
-            return (Concrete concreteName [])
+            return (Concrete (overwriteText concreteName name) [])
         g ty = return ty
     in do
         m' <- transformBiM g m
@@ -105,20 +106,20 @@ ensureInstance name typeParameters = do
     lift (modifyIORef' ref (\e -> (name, typeParameters):e))
 
 instantiate :: Text -> [Type] -> Statement -> Statement
-instantiate genericName typeParameters (StructDefinition _ functionTypeParameters fields) =
+instantiate genericName typeParameters (StructDefinition def functionTypeParameters fields) =
     let
         concreteName = concretize genericName typeParameters
-        subst = zipTypeParameters functionTypeParameters typeParameters
+        subst = zipTypeParameters (fmap getTxt functionTypeParameters) typeParameters
         fields' = substitute subst fields
-    in StructDefinition concreteName [] fields'
-instantiate genericName typeParameters (FunctionDefintion _ functionTypeParameters returnType parameters body) =
+    in StructDefinition (overwriteText concreteName def) [] fields'
+instantiate genericName typeParameters (FunctionDefintion def functionTypeParameters returnType parameters body) =
     let
         concreteName = concretize genericName typeParameters
-        subst = zipTypeParameters functionTypeParameters typeParameters
+        subst = zipTypeParameters (fmap getTxt functionTypeParameters) typeParameters
         returnType' = substitute subst returnType
         parameters' = substitute subst parameters
         body' = substitute subst body
-    in FunctionDefintion concreteName [] returnType' parameters' body'
+    in FunctionDefintion (overwriteText concreteName def) [] returnType' parameters' body'
 instantiate _ _ statement = error ("Expected definition for instantiate, but was " ++ show statement)
 
 hasTypeParameters :: Statement -> Bool
@@ -141,8 +142,8 @@ lookupDefinition name (def:rest) =
     if getName def == name then Just def else lookupDefinition name rest
 
 getName :: Statement -> Text
-getName (FunctionDefintion name _ _ _ _) = name
-getName (StructDefinition name _ _) = name
+getName (FunctionDefintion name _ _ _ _) = getTxt name
+getName (StructDefinition name _ _) = getTxt name
 getName statement = error ("Expected definition for getName, but was " ++ show statement)
 
 -- These receive type parameters, but cannot be specialized, because they have no definition
@@ -154,6 +155,6 @@ concretize name typeParameters =
     foldl1 (\t1 t2 -> t1 <> "__" <> t2) (name:fmap compactName typeParameters)
 
 compactName :: Type -> Text
-compactName (Concrete name []) = name
+compactName (Concrete name []) = getTxt name
 compactName (PointerType ty) = compactName ty <> "ptr"
 compactName ty = error ("Failed pretty " ++ show ty)

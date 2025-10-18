@@ -4,7 +4,9 @@ module Cgen(prettyC) where
 import Types
 import Data.Text(pack)
 import Prettyprinter(Doc, (<+>), parens)
-import Helpers((<//>), intercalate, fromText, escape, indent, isConstructor)
+import Helpers((<//>),
+    intercalate, fromText, fromLocatedText,
+    escape, indent, isConstructor)
 
 
 prettyC :: Module -> Doc ann
@@ -19,7 +21,7 @@ statementToC (Definition name e) =
 statementToC (Call e) = expressionToC e <> ";"
 statementToC (Assignment e1 e2) = expressionToC e1 <+> "=" <+> expressionToC e2 <> ";"
 statementToC (FunctionDefintion name [] ty parameters statements) =
-    typeToC ty <+> fromText name
+    typeToC ty <+> fromLocatedText name
         <> parens (intercalate ", " (fmap nameToC parameters))
         <//> "{"
         <//> indent (intercalate "\n" (fmap statementToC statements))
@@ -28,9 +30,9 @@ statementToC (Return (Just e)) = "return" <+> expressionToC e <> ";"
 statementToC (Return Nothing) = "return;"
 statementToC (Import _ _) = ""
 statementToC (ExternDefintion name returnType parameters) =
-    typeToC returnType <+> fromText name <> parens (intercalate ", " (fmap nameToC parameters)) <>";"
+    typeToC returnType <+> fromLocatedText name <> parens (intercalate ", " (fmap nameToC parameters)) <>";"
 statementToC (StructDefinition name [] parameters) =
-    "struct" <+> fromText name <+> "{"
+    "struct" <+> fromLocatedText name <+> "{"
         <//> indent (intercalate "\n" (fmap fieldToC parameters))
         <//> "}" <> ";"
 statementToC (If (cond:conds) Nothing) =
@@ -127,23 +129,28 @@ parensWrapped e =
         _ -> expressionToC e
 
 typeToC :: Type -> Doc a
-typeToC (PointerType t) = typeToC t <> "*"
+typeToC (PointerType t) =
+    typeToC t <> "*"
 typeToC (FunctionType returnType parameterTypes) =
     typeToC returnType <+> parens "*" <> parens (intercalate ", " (fmap typeToC parameterTypes))
-typeToC (Concrete "void" []) = "void"
-typeToC (Concrete "bool" []) = "bool"
-typeToC (Concrete "char" []) = "char"
-typeToC (Concrete "short" []) = "short int"
-typeToC (Concrete "ushort" []) = "unsigned short int"
-typeToC (Concrete "int" []) = "int"
-typeToC (Concrete "uint" []) = "unsigned int"
-typeToC (Concrete "long" []) = "long long int"
-typeToC (Concrete "ulong" []) = "unsigned long long int"
-typeToC (Concrete "float" []) = "float"
-typeToC (Concrete "double" []) = "double"
-typeToC (Concrete "usize" []) = "size_t"
-typeToC (Concrete "string" []) = "char*"
+typeToC (Concrete name []) =
+    concreteTypeToC (getTxt name)
+typeToC other =
+    error ("Cannot print type of " ++ show other)
+
+concreteTypeToC "void" = "void"
+concreteTypeToC "bool" = "bool"
+concreteTypeToC "char" = "char"
+concreteTypeToC "short" = "short int"
+concreteTypeToC "ushort" = "unsigned short int"
+concreteTypeToC "int" = "int"
+concreteTypeToC "uint" = "unsigned int"
+concreteTypeToC "long" = "long long int"
+concreteTypeToC "ulong" = "unsigned long long int"
+concreteTypeToC "float" = "float"
+concreteTypeToC "double" = "double"
+concreteTypeToC "usize" = "size_t"
+concreteTypeToC "string" = "char*"
 -- TODO we need to deal with opaque pointers, otherwise
 -- `Pointer<FILE>` becomes `struct FILE*`instead of `FILE*`
-typeToC (Concrete s []) = "struct" <+> fromText s
-typeToC other = error ("Cannot print type of " ++ show other)
+concreteTypeToC s = "struct" <+> fromText s

@@ -13,7 +13,7 @@ import qualified Data.Text.IO as Text
 import Data.Text(Text, pack)
 import Data.Int(Int32, Int64)
 import Data.Word(Word32, Word64)
-
+import Helpers(overwriteText)
 
 type Parser a = StateT [Token] Maybe a
 
@@ -40,7 +40,7 @@ next = StateT uncons
 
 -- This is for definitions, like functions and structs
 -- `struct Example<T> { }`
-typeNameParameters :: Parser [Text]
+typeNameParameters :: Parser [LocatedText]
 typeNameParameters = angles (sepByTrailing identifier (token ","))
 
 typeParameters :: Parser [Type]
@@ -48,10 +48,10 @@ typeParameters = angles (sepByTrailing typeVariable (token ","))
 
 typeVariable :: Parser Type
 typeVariable = do
-    t <- identifier
+    i <- identifier
     ts <- option [] typeParameters
     arraySizes <- many (squares (optional integer))
-    return (foldl ArrayType (makeConcrete t ts) arraySizes)
+    return (foldl ArrayType (makeType i ts) arraySizes)
 
 -- operators
 expr :: Parser Expression
@@ -60,12 +60,12 @@ expr = conditionalOp
 -- a = wasTrue? thenCase : elseCase
 conditionalOp :: Parser Expression
 conditionalOp =
-    (makeConditionalOp <$> orOp <*> fmap snd (operator "?") <*> optional expr <*> (operator ":" *> expr))
+    (makeConditionalOp <$> orOp <*> operator "?" <*> optional expr <*> (operator ":" *> expr))
     <|> orOp
 
-makeConditionalOp :: Expression -> Location -> Maybe Expression -> Expression -> Expression
-makeConditionalOp a loc thenBranch b =
-    Apply (Variable (Name "?:" auto loc) []) ([a] ++ maybe [] return thenBranch ++ [b])
+makeConditionalOp :: Expression -> LocatedText -> Maybe Expression -> Expression -> Expression
+makeConditionalOp a op thenBranch b =
+    Apply (Variable (Name "?:" auto (getLoc loc)) []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp :: Parser Expression
@@ -88,27 +88,28 @@ mulOp = leftAssoc makeBinaryOp (operator "*" <|> operator "/" <|> operator "%") 
 expoOp :: Parser Expression
 expoOp = liftA3 makeBinaryOp unOp (operator "^") expoOp <|> unOp
 
-makeBinaryOp :: Expression -> (Text, Location) -> Expression -> Expression
-makeBinaryOp a (opName, loc) b =
-    Apply (Variable (Name opName auto loc) []) [a, b]
+makeBinaryOp :: Expression -> LocatedText -> Expression -> Expression
+makeBinaryOp a op b =
+    Apply (Variable (Name (getTxt op) auto (getLoc op)) []) [a, b]
 
 leftAssoc :: Alternative f => (t -> sep -> t -> t) -> f sep -> f t -> f t
-leftAssoc g op p = liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
+leftAssoc g op p =
+    liftA2 (foldl (flip id)) p (many (liftA2 (\o a b -> g b o a) op p))
 
 -- unary operators
 unOp :: Parser Expression
 unOp = liftA2 makeUnaryOp (operator "!" <|> unaryMinus) postfixExpression
     <|> postfixExpression
 
--- unary minus uses "-_" to differentiate between negation and subtraction
-unaryMinus :: Parser (Text, Location)
+unaryMinus :: Parser LocatedText
 unaryMinus = do
-    (_, loc) <- operator "-"
-    return ("-_", loc)
+    i <- operator "-"
+    -- unary minus uses "-_" to differentiate between negation and subtraction
+    return (overwriteText "-_" i)
 
-makeUnaryOp :: (Text, Location) -> Expression -> Expression
-makeUnaryOp (opName, loc) a =
-    Apply (Variable (Name opName auto loc) []) [a]
+makeUnaryOp :: LocatedText -> Expression -> Expression
+makeUnaryOp op a =
+    Apply (Variable (Name (getTxt op) auto (getLoc op)) []) [a]
 
 templateString :: Parser Expression
 templateString = do
@@ -155,8 +156,8 @@ primaryExpression =
 
 -- a.b
 dotAcces :: Parser (Expression -> Expression)
-dotAcces = liftA2 (\(i, loc) ts e -> DotAccess e (Name i auto loc) ts)
-    (token "." *> identifierWithLocation)
+dotAcces = liftA2 (\i ts e -> DotAccess e (Name (getTxt i) auto (getLoc i)) ts)
+    (token "." *> identifier)
     (option [] typeParameters)
 
 -- a[2]
@@ -171,7 +172,7 @@ parameterList = fmap (flip Apply) (parens (sepByTrailing expr (token ",")))
 
 variable :: Parser Expression
 variable =
-    liftA2 (\(i, loc) ts -> Variable (Name i auto loc) ts) identifierWithLocation (option [] typeParameters)
+    liftA2 (\i ts -> Variable (Name (getTxt i) auto (getLoc i)) ts) identifier (option [] typeParameters)
 
 -- helper functions to transform tokens to values
 integer :: Parser Int32
@@ -207,22 +208,17 @@ string = do
 bool :: Parser Literal
 bool = (token "true" $> Bool True) <|> (token "false" $> Bool False)
 
-identifierWithLocation :: Parser (Text, Location)
-identifierWithLocation = do
+identifier :: Parser LocatedText
+identifier = do
     Identifier i loc <- next
-    return (i, loc)
+    return (LocatedText i loc)
 
-operator :: Text -> Parser (Text, Location)
+operator :: Text -> Parser LocatedText
 operator t = do
     Special op loc <- next
     if op == t
-        then return (op, loc)
+        then return (LocatedText op loc)
         else fail "operator"
-
-identifier :: Parser Text
-identifier = do
-    Identifier i _ <- next
-    return i
 
 token :: Text -> Parser Text
 token t = do
