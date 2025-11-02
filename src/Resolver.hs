@@ -270,10 +270,17 @@ resolveExpression (ArrayExpression expressions) expectedType =
         -- TODO Check size match
         ArrayType elementType size -> fmap ArrayExpression (traverse (\e -> resolveExpression e elementType) expressions)
         other -> fail ("An array always expects an element type, but was given " ++ show other)
+-- TODO Improve conversion of int literals and consider size
+-- for example, something like
+-- `char c = 255;` or `someFloat == 0`
+-- are really unambiguous and should work without a cast
+-- and something like this
+-- `char c = 300;`
+-- should just fail, because it is greater than char's max value
 resolveExpression e@(Literal l) expectedType =
     let
         ty = literalType l
-    in if subsumes ty expectedType
+    in if subsumes ty expectedType || (ty == intType && elem expectedType [intType, shortType, charType])
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
