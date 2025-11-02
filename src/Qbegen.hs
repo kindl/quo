@@ -402,7 +402,7 @@ emitApply (Variable var []) expressions =
             return ("%" <> freshIdent)
         _ -> fail ("Unexpected non-function type " <> show var)
 -- TODO Should the following case be allowed? For example for currying?
--- Probably not very interesting without closuses, but possible
+-- Probably not very interesting without closures, but possible
 -- getCompare(compareOption)(a, b)
 emitApply expression expressions = do
     freshIdent <- newIdent ".local"
@@ -611,6 +611,9 @@ emitCast (Concrete fromName []) targetType@(Concrete targetName []) val =
             freshIdent <- newIdent ".local"
             emit (Instruction freshIdent (toQbeTy targetType) "stosi" [val])
             return ("%" <> freshIdent)
+        (l, r) ->
+            fail ("Conversion from " ++ show l ++ " to "
+                ++ show r ++ " not implemented yet")
 emitCast parameterType targetType _ =
     fail ("Conversion from " ++ show parameterType ++ " to "
         ++ show targetType ++ " not implemented yet")
