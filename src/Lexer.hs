@@ -2,7 +2,8 @@
 module Lexer(tokenize, Token(..)) where
 
 import Prelude hiding (takeWhile)
-import Data.Char(isSpace, isAlpha, isAlphaNum, isDigit)
+import Data.Char(isSpace, isAlpha, isAlphaNum,
+    isDigit, isHexDigit)
 import Types(Location(..), emptyLocation, operators)
 import Control.Applicative((<|>), optional)
 import Data.Attoparsec.Combinator(manyTill', many', eitherP)
@@ -23,6 +24,7 @@ data Token =
     -- because in some cases, for example for "<"
     -- a token can be used for both
     | Special Text Location
+    -- This can be narrowed down to smaller literals
     | Int Int32
     | UInt Word32
     | Long Int64
@@ -126,7 +128,19 @@ specifier :: Parser Text
 specifier = string "f" <|> string "L" <|> string "UL" <|> string "U"
 
 numberToken :: Parser Token
-numberToken = do
+numberToken =
+    hexadecimalNumberToken <|> decimalNumberToken
+
+hexadecimalNumberToken :: Parser Token
+hexadecimalNumberToken = do
+    z <- char '0'
+    x <- char 'x' <|> char 'X'
+    ds <- takeWhile1 isHexDigit
+    let s = Text.unpack (Text.cons z (Text.cons x ds))
+    return (Int (read s))
+
+decimalNumberToken :: Parser Token
+decimalNumberToken = do
     digs <- digitsWithOptionalSign
     dot <- option "" dotPart
     expo <- option "" exponentPart
@@ -169,6 +183,10 @@ escapeSequence = char '\\' *>
 templateString :: Parser [(Text, Token)]
 templateString = do
     begin <- match (string "$\"" $> TemplateStringBegin)
+    -- This works, because the takeWhile
+    -- in templateStringPart will consume everything
+    -- but this probably should use a safer combinator
+    -- different from `many`
     midParts <- many' (eitherP (match templateStringPart) expressionPart)
     end <- match (char '\"' $> TemplateStringEnd)
     return (begin : collapse midParts ++ [end])
