@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings, DeriveDataTypeable #-}
-module Lexer(tokenize, Token(..)) where
+module Lexer(Token(..), alternating1, tokenize) where
 
 import Prelude hiding (takeWhile)
 import Data.Char(isSpace, isAlpha, isAlphaNum,
     isDigit, isHexDigit)
 import Types(Location(..), emptyLocation, operators)
 import Control.Applicative((<|>), optional)
+import Control.Monad(MonadPlus)
 import Data.Attoparsec.Combinator(manyTill', many', eitherP)
 import Data.Attoparsec.Text(Parser, takeWhile, takeWhile1, string, char, satisfy,
     anyChar, parseOnly, match, option, endOfInput)
@@ -174,7 +175,8 @@ nonTemplateString =
 
 escapeSequence :: Parser Char
 escapeSequence = char '\\' *>
-    (char '\\' <|> char '\"'
+    (char '\\'
+    <|> char '\"'
     <|> char 'n' *> return '\n'
     <|> char 'r' *> return '\r'
     <|> char 't' *> return '\t'
@@ -183,16 +185,17 @@ escapeSequence = char '\\' *>
 templateString :: Parser [(Text, Token)]
 templateString = do
     begin <- match (string "$\"" $> TemplateStringBegin)
-    -- This works, because the takeWhile
-    -- in templateStringPart will consume everything
-    -- but this probably should use a safer combinator
-    -- different from `many`
-    midParts <- many' (eitherP (match templateStringPart) expressionPart)
+    midParts <- alternating1 (fmap return (match templateStringPart)) expressionPart
     end <- match (char '\"' $> TemplateStringEnd)
-    return (begin : collapse midParts ++ [end])
+    return (begin : concat midParts ++ [end])
+
+alternating1 :: MonadPlus f => f a -> f a -> f [a]
+alternating1 a sep =
+    liftA2 (\x y -> x : concat y) a (many' (liftA2 (\x y -> [x, y]) sep a))
 
 templateStringPart :: Parser Token
-templateStringPart = fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x == '\\' && x /= '{'))
+templateStringPart =
+    fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x /= '\\' && x /= '{'))
 
 escapedString :: (Char -> Bool) -> Parser Text
 escapedString p = fmap Text.concat (many' (takeWhile1 p <|> fmap Text.singleton escapeSequence))

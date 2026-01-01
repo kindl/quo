@@ -153,7 +153,11 @@ statementExpression = postfixExpression
 
 primaryExpression :: Parser Expression
 primaryExpression =
-    fmap Literal literal <|> variable <|> parens expr <|> arrayExpression
+    fmap Literal literal
+    <|> variable
+    <|> parens expr
+    <|> arrayExpression
+    <|> templateString
 
 -- a.b
 dotAcces :: Parser (Expression -> Expression)
