@@ -72,11 +72,24 @@ orOp :: Parser Expression
 orOp = leftAssoc makeBinaryOp (operator "||") andOp
 
 andOp :: Parser Expression
-andOp = leftAssoc makeBinaryOp (operator "&&") compareOp
+andOp = leftAssoc makeBinaryOp (operator "&&") bitwiseOrOp
+
+bitwiseOrOp :: Parser Expression
+bitwiseOrOp = leftAssoc makeBinaryOp (operator "|") xorOp
+
+xorOp :: Parser Expression
+xorOp = leftAssoc makeBinaryOp (operator "^") bitwiseAndOp
+
+bitwiseAndOp :: Parser Expression
+bitwiseAndOp = leftAssoc makeBinaryOp (operator "&") eqOp
+
+eqOp :: Parser Expression
+eqOp =
+    leftAssoc makeBinaryOp (operator "!=" <|> operator "==") compareOp
 
 compareOp :: Parser Expression
 compareOp =
-    leftAssoc makeBinaryOp (operator "<" <|> operator ">" <|> operator "<=" <|> operator ">=" <|> operator "!=" <|> operator "==") addOp
+    leftAssoc makeBinaryOp (operator "<" <|> operator ">" <|> operator "<=" <|> operator ">=") addOp
 
 -- arithmethic operators
 addOp :: Parser Expression
@@ -86,7 +99,7 @@ mulOp :: Parser Expression
 mulOp = leftAssoc makeBinaryOp (operator "*" <|> operator "/" <|> operator "%") expoOp
 
 expoOp :: Parser Expression
-expoOp = liftA3 makeBinaryOp unOp (operator "^") expoOp <|> unOp
+expoOp = liftA3 makeBinaryOp unOp (operator "**") expoOp <|> unOp
 
 makeBinaryOp :: Expression -> LocatedText -> Expression -> Expression
 makeBinaryOp a op b =
@@ -98,7 +111,7 @@ leftAssoc g op p =
 
 -- unary operators
 unOp :: Parser Expression
-unOp = liftA2 makeUnaryOp (operator "!" <|> unaryMinus) postfixExpression
+unOp = liftA2 makeUnaryOp (operator "!" <|> operator "~" <|> unaryMinus) postfixExpression
     <|> postfixExpression
 
 unaryMinus :: Parser LocatedText
@@ -125,7 +138,6 @@ templateStringMid :: Parser Expression
 templateStringMid = do
     TemplateStringMid s <- next
     return (Literal (StringLiteral s))
-
 
 literal :: Parser Literal
 literal = fmap Int32 integer

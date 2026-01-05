@@ -3,7 +3,6 @@ module Resolver(StructLookup, TypeLookup, runResolve, literalType, readType,
     substitute, zipTypeParameters, gatherStructs) where
 
 import Types
-import Control.Applicative(liftA2)
 import Control.Monad.Trans.Reader(ReaderT, runReaderT, asks, local)
 import Control.Monad(zipWithM, when)
 import Data.Text(Text)
@@ -28,6 +27,7 @@ type Resolve a = ReaderT Env IO a
 baseEnv :: Env
 baseEnv =
     Env [
+        ("?:", FunctionType auto [boolType, auto, auto]),
         -- Equality
         ("==", FunctionType boolType [auto, auto]),
         ("!=", FunctionType boolType [auto, auto]),
@@ -36,10 +36,15 @@ baseEnv =
         (">", FunctionType boolType [auto, auto]),
         (">=", FunctionType boolType [auto, auto]),
         ("<=", FunctionType boolType [auto, auto]),
-        -- Bool
+        -- Logical
         ("!", FunctionType boolType [boolType]),
         ("||", FunctionType boolType [boolType, boolType]),
         ("&&", FunctionType boolType [boolType, boolType]),
+        -- Bitwise
+        ("~", FunctionType auto [auto]),
+        ("^", FunctionType auto [auto, auto]),
+        ("|", FunctionType auto [auto, auto]),
+        ("&", FunctionType auto [auto, auto]),
         -- Arithmetic
         ("-_", FunctionType auto [auto]),
         ("+", FunctionType auto [auto, auto]),
@@ -64,7 +69,7 @@ resolveModule (Module name statements) =
         annotations = gatherAnnotations statements
         structs = gatherStructs statements
     in do
-        resolved <- with' annotations structs (resolveDefinitions statements)
+        resolved <- withAnnotationsAndStructs annotations structs (resolveDefinitions statements)
         return (Module name resolved)
 
 resolveDefinitions :: [Statement] -> Resolve [Statement]
@@ -115,8 +120,8 @@ getStructEnv = asks (\(Env _ e) -> e)
 with :: TypeLookup -> ReaderT Env m a -> ReaderT Env m a
 with env = local (\(Env variableEnv structEnv) -> Env (variableEnv <> env) structEnv)
 
-with' :: TypeLookup -> StructLookup -> ReaderT Env m a -> ReaderT Env m a
-with' e s = local (\(Env variableEnv structEnv) -> Env (variableEnv <> e) (structEnv <> s))
+withAnnotationsAndStructs :: TypeLookup -> StructLookup -> ReaderT Env m a -> ReaderT Env m a
+withAnnotationsAndStructs e s = local (\(Env variableEnv structEnv) -> Env (variableEnv <> e) (structEnv <> s))
 
 
 resolveStatements :: [Statement] -> Resolve [Statement]
@@ -299,6 +304,12 @@ resolveOperator returnType (Variable var []) [resolved1, resolved2] =
         parameterType = readType resolved1
         resolvedReturnType = if returnType == auto then parameterType else returnType
     in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType])) []) [resolved1, resolved2]
+resolveOperator returnType (Variable var []) [resolved1, resolved2, resolved3] =
+    let
+        name = getLocatedText var
+        parameterType = readType resolved1
+        resolvedReturnType = if returnType == auto then parameterType else returnType
+    in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType])) []) [resolved1, resolved2, resolved3]
 resolveOperator _ other _ =
     error ("Cannot resolve operator " ++ show other)
 

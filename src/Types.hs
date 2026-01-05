@@ -82,10 +82,13 @@ usizeType :: Type
 usizeType = makePrimitiveType "usize"
 
 isPrimitive :: Type -> Bool
-isPrimitive ty = elem ty [boolType, charType,
-    shortType, ushortType, intType, uintType,
-    longType, ulongType, floatType, doubleType,
-    usizeType]
+isPrimitive ty = elem ty
+    [
+        boolType, charType,
+        shortType, ushortType, intType, uintType,
+        longType, ulongType, floatType, doubleType,
+        usizeType
+    ]
 
 instance Eq Type where
     (==) (Concrete n1 ps1) (Concrete n2 ps2) =
@@ -121,10 +124,20 @@ makeType locatedText typeParameters =
 isOperator :: Text -> Bool
 isOperator x = elem x operators
 
+-- Sequence matters for lexing,
+-- for example "==" needs to be before "="
 operators :: [Text]
-operators = ["==", "<=", ">=", "!=", "&&", "||", "-_",
-    "!", "^", "?", ":", "+", "-", "*", "/", "%", "<", ">", "="]
-
+operators =
+    [
+    "==", "!=", "<=", ">=", "<", ">",
+    "=",
+    "&&", "||",
+    "&", "|", "^",
+    "+", "-",
+    "**", "*", "/", "%",
+    "-_",
+    "!", "~", "?", ":"
+    ]
 
 data Name = Name {
     getLocatedText :: LocatedText,
