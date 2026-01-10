@@ -378,7 +378,12 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
     offsetVal <- createOffsetVal offset val
     emitLoadOrVal fieldType offsetVal
 
+-- TODO Make the evaluation of parameters more visible
 emitApply :: Expression -> [Expression] -> Emit Text
+emitApply (Variable name _) [parameter1, parameter2] | getInnerText name == "&&" =
+    emitIfExpression parameter1 parameter2 (Literal (Bool False))
+emitApply (Variable name _) [parameter1, parameter2] | getInnerText name == "||" =
+    emitIfExpression parameter1 (Literal (Bool True)) parameter2
 emitApply (Variable name [targetType]) [parameter] | getInnerText name == "cast" = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
@@ -447,6 +452,12 @@ emitOperator' ident qbeTy "*" _ val1 val2 =
     emit (Instruction ident qbeTy "mul" [val1, val2])
 emitOperator' ident qbeTy "/" _ val1 val2 =
     emit (Instruction ident qbeTy "div" [val1, val2])
+emitOperator' ident qbeTy "&" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy "and" [val1, val2])
+emitOperator' ident qbeTy "|" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy "or" [val1, val2])
+emitOperator' ident qbeTy "^" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("xor" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy "==" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("ceq" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy ">" argQbeTy val1 val2 =
@@ -459,17 +470,6 @@ emitOperator' ident qbeTy ">=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("csge" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
-emitOperator' ident qbeTy "&" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("and" <> argQbeTy) [val1, val2])
-emitOperator' ident qbeTy "|" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("or" <> argQbeTy) [val1, val2])
-emitOperator' ident qbeTy "^" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("xor" <> argQbeTy) [val1, val2])
--- TODO lazyness: This has to happen before evaluating the arguments
-emitOperator' ident qbeTy "&&" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("and" <> argQbeTy) [val1, val2])
-emitOperator' ident qbeTy "||" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("or" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
 emitAssignExpression :: Val -> Type -> Expression -> Emit ()
@@ -684,10 +684,16 @@ literalToText (Int64 l) = pack (show l)
 literalToText (UInt64 l) = pack (show l)
 literalToText (Float32 l) = "s_" <> pack (show l)
 literalToText (Float64 l) = "d_" <> pack (show l)
-literalToText (Bool True) = "1"
-literalToText (Bool False) = "0"
+literalToText (Bool True) = trueVal
+literalToText (Bool False) = falseVal
 literalToText (StringLiteral _) =
     error "String literals have to be handled with literalToVal"
+
+falseVal :: Val
+falseVal = "0"
+
+trueVal :: Val
+trueVal = "1"
 
 pointerTy :: Ty
 pointerTy = "l"
