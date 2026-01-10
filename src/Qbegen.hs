@@ -178,11 +178,11 @@ definitionToBlocks nameWithType (Apply (Variable constructor []) expressions) | 
     let structType = getType nameWithType
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
-definitionToBlocks nameWithType (IfExpression cond (Just thenBranch) elseBranch) = do
+definitionToBlocks nameWithType (IfExpression cond thenBranch elseBranch) = do
     let name = getInnerText nameWithType
     let resultType = getType nameWithType
     emitAlloc name resultType
-    emitIfExpression resultType ("%" <> name) cond thenBranch elseBranch
+    emitIfExpression' resultType ("%" <> name) cond thenBranch elseBranch
 definitionToBlocks nameWithType (ArrayExpression expressions) =
     case getType nameWithType of
         ArrayType elementType _ -> do
@@ -352,11 +352,8 @@ expressionToVal (Literal l) =
     literalToVal l
 expressionToVal (Apply expression expressions) =
     emitApply expression expressions
-expressionToVal (IfExpression cond (Just thenBranch) elseBranch) = do
-    targetVal <- newIdent ".local"
-    let resultType = readType elseBranch
-    emitIfExpression resultType ("%" <> targetVal) cond thenBranch elseBranch
-    emitLoadOrVal resultType ("%" <> targetVal)
+expressionToVal (IfExpression cond thenBranch elseBranch) =
+    emitIfExpression cond thenBranch elseBranch
 expressionToVal (SquareAccess expression accessor) = do
     -- This will hold the accessor converted to size
     extVal <- newIdent ".local"
@@ -505,18 +502,8 @@ emitAssignElements elementType target expressions = do
     let pairs = fmap (\index -> (elementType, index * elementSize)) numbers
     zipWithM_ (emitAssignAux target) pairs expressions
 
--- TODO create stack space enough for the result of ?:
--- or alternatively reuse existing space for example in
--- let x = c ? t : e;
--- emit the expression for the condition
--- emit then label
--- emit expression t and store
--- emit else label
--- emit expression e and store
--- jump out
--- stack variable will have the correct value
-emitIfExpression :: Type -> Val -> Expression -> Expression -> Expression -> Emit ()
-emitIfExpression resultType target cond thenBranch elseBranch = do
+emitIfExpression' :: Type -> Val -> Expression -> Expression -> Expression -> Emit ()
+emitIfExpression' resultType target cond thenBranch elseBranch = do
     thenLabel <- newLabel "then"
     elseLabel <- newLabel "else"
     endLabel <- newLabel "end"
@@ -532,6 +519,14 @@ emitIfExpression resultType target cond thenBranch elseBranch = do
     elseVal <- expressionToVal elseBranch
     emitStore resultType elseVal target
     emit (Label endLabel)
+
+emitIfExpression :: Expression -> Expression -> Expression -> Emit Val
+emitIfExpression cond thenBranch elseBranch = do
+    targetVal <- newIdent ".local"
+    let resultType = readType elseBranch
+    emitAlloc targetVal resultType
+    emitIfExpression' resultType ("%" <> targetVal) cond thenBranch elseBranch
+    emitLoadOrVal resultType ("%" <> targetVal)
 
 emitAssignFields :: Type -> Val -> [Expression] -> Emit ()
 emitAssignFields structType target expressions = do

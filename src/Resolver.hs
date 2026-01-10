@@ -291,7 +291,7 @@ resolveExpression e@(Literal l) expectedType =
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
 resolveExpression (IfExpression cond thenBranch elseBranch) expectedType = do
     resolvedCond <- resolveExpression cond boolType
-    resolvedThen <- traverse (\e -> resolveExpression e expectedType) thenBranch
+    resolvedThen <- resolveExpression thenBranch expectedType
     resolvedElse <- resolveExpression elseBranch expectedType
     return (IfExpression resolvedCond resolvedThen resolvedElse)
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)

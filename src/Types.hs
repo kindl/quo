@@ -186,7 +186,7 @@ data Expression =
     Apply Expression [Expression]
     -- This could be expressed with application, but because
     -- of the special treatment it has a separate constructor
-    | IfExpression Expression (Maybe Expression) Expression
+    | IfExpression Expression Expression Expression
     | Variable Name [Type]
     | DotAccess Expression Name [Type]
     | SquareAccess Expression Expression

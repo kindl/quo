@@ -84,17 +84,15 @@ fieldToC name = nameToC name <> ";"
 expressionToC :: Expression -> Doc a
 expressionToC (Variable name []) = fromName name
 expressionToC (Variable name typeParameters) =
-    error ("Unexpected variable " ++ show name ++ " with type paramers " ++ show typeParameters)
+    error ("Unexpected variable " ++ show name ++ " with type parameters " ++ show typeParameters)
 expressionToC (Literal l) = literalToC l
 -- Operators
 expressionToC (Apply (Variable name [ty]) [expression]) | getInnerText name == "cast" =
     parens (parens (typeToC ty) <> expressionToC expression)
 expressionToC (Apply (Variable name [ty]) []) | getInnerText name == "sizeof" =
     "sizeof" <> parens (typeToC ty)
-expressionToC (IfExpression cond (Just thenBranch) elseBranch) =
+expressionToC (IfExpression cond thenBranch elseBranch) =
     parensWrapped cond <+> "?" <+> parensWrapped thenBranch <+> ":" <+> parensWrapped elseBranch
-expressionToC (IfExpression _ Nothing _) =
-    error "if-expression without then branch not supported yet"
 expressionToC (Apply (Variable name _) es) | isOperator (getInnerText name) =
     case es of
         [e] -> fromName name <> parensWrapped e
