@@ -60,12 +60,8 @@ expr = conditionalOp
 -- a = wasTrue? thenCase : elseCase
 conditionalOp :: Parser Expression
 conditionalOp =
-    (makeConditionalOp <$> orOp <*> operator "?" <*> optional expr <*> (operator ":" *> expr))
+    (IfExpression <$> orOp <*> (operator "?" *> optional expr) <*> (operator ":" *> expr))
     <|> orOp
-
-makeConditionalOp :: Expression -> LocatedText -> Maybe Expression -> Expression -> Expression
-makeConditionalOp a op thenBranch b =
-    Apply (Variable (Name (overwriteText "?:" op) auto) []) ([a] ++ maybe [] return thenBranch ++ [b])
 
 -- logical operators
 orOp :: Parser Expression

@@ -91,8 +91,15 @@ expressionToC (Apply (Variable name [ty]) [expression]) | getInnerText name == "
     parens (parens (typeToC ty) <> expressionToC expression)
 expressionToC (Apply (Variable name [ty]) []) | getInnerText name == "sizeof" =
     "sizeof" <> parens (typeToC ty)
-expressionToC (Apply (Variable name _) [e1, e2]) | isOperator (getInnerText name) =
-    parensWrapped e1 <+> fromName name <+> parensWrapped e2
+expressionToC (IfExpression cond (Just thenBranch) elseBranch) =
+    parensWrapped cond <+> "?" <+> parensWrapped thenBranch <+> ":" <+> parensWrapped elseBranch
+expressionToC (IfExpression _ Nothing _) =
+    error "if-expression without then branch not supported yet"
+expressionToC (Apply (Variable name _) es) | isOperator (getInnerText name) =
+    case es of
+        [e] -> fromName name <> parensWrapped e
+        [e1, e2] -> parensWrapped e1 <+> fromName name <+> parensWrapped e2
+        _ -> error ("Operator " <> show name <> " has wrong number of arguments")
 expressionToC (Apply (Variable name _) es) | isConstructor name =
     parens ("struct" <+> fromName name)
         <> "{" <> intercalate ", " (fmap expressionToC es) <> "}"

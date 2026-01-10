@@ -178,6 +178,11 @@ definitionToBlocks nameWithType (Apply (Variable constructor []) expressions) | 
     let structType = getType nameWithType
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
+definitionToBlocks nameWithType (IfExpression cond (Just thenBranch) elseBranch) = do
+    let name = getInnerText nameWithType
+    let resultType = getType nameWithType
+    emitAlloc name resultType
+    emitIfExpression resultType ("%" <> name) cond thenBranch elseBranch
 definitionToBlocks nameWithType (ArrayExpression expressions) =
     case getType nameWithType of
         ArrayType elementType _ -> do
@@ -347,6 +352,11 @@ expressionToVal (Literal l) =
     literalToVal l
 expressionToVal (Apply expression expressions) =
     emitApply expression expressions
+expressionToVal (IfExpression cond (Just thenBranch) elseBranch) = do
+    targetVal <- newIdent ".local"
+    let resultType = readType elseBranch
+    emitIfExpression resultType ("%" <> targetVal) cond thenBranch elseBranch
+    emitLoadOrVal resultType ("%" <> targetVal)
 expressionToVal (SquareAccess expression accessor) = do
     -- This will hold the accessor converted to size
     extVal <- newIdent ".local"
@@ -419,6 +429,9 @@ emitApply expression expressions = do
 emitOperator :: Ident -> Ty -> Text -> [(Text, Val)] -> Emit ()
 emitOperator ident qbeTy "-_" [(_, val)] =
     emit (Instruction ident qbeTy "neg" [val])
+-- TODO How is bitwise not usually expressed?
+emitOperator ident qbeTy "~" [(_, val)] =
+    emit (Instruction ident qbeTy "xor" [val, "-1"])
 emitOperator ident qbeTy "!" [(_, val)] =
     emit (Instruction ident qbeTy "ceqw" [val, "0"])
 emitOperator ident qbeTy op [(qbeTy1, val1), (qbeTy2, val2)] =
@@ -449,6 +462,17 @@ emitOperator' ident qbeTy ">=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("csge" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy "!=" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("cne" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "&" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("and" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "|" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("or" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "^" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("xor" <> argQbeTy) [val1, val2])
+-- TODO lazyness: This has to happen before evaluating the arguments
+emitOperator' ident qbeTy "&&" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("and" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "||" argQbeTy val1 val2 =
+    emit (Instruction ident qbeTy ("or" <> argQbeTy) [val1, val2])
 emitOperator' _ _ op _ _ _ = fail ("Unknown operator " <> show op)
 
 emitAssignExpression :: Val -> Type -> Expression -> Emit ()
@@ -480,6 +504,34 @@ emitAssignElements elementType target expressions = do
     let elementSize = getSize structEnv elementType
     let pairs = fmap (\index -> (elementType, index * elementSize)) numbers
     zipWithM_ (emitAssignAux target) pairs expressions
+
+-- TODO create stack space enough for the result of ?:
+-- or alternatively reuse existing space for example in
+-- let x = c ? t : e;
+-- emit the expression for the condition
+-- emit then label
+-- emit expression t and store
+-- emit else label
+-- emit expression e and store
+-- jump out
+-- stack variable will have the correct value
+emitIfExpression :: Type -> Val -> Expression -> Expression -> Expression -> Emit ()
+emitIfExpression resultType target cond thenBranch elseBranch = do
+    thenLabel <- newLabel "then"
+    elseLabel <- newLabel "else"
+    endLabel <- newLabel "end"
+
+    val <- expressionToVal cond
+    emit (JumpNonZero val thenLabel elseLabel)
+    emit (Label thenLabel)
+    thenVal <- expressionToVal thenBranch
+    emitStore resultType thenVal target
+    emit (Jump endLabel)
+
+    emit (Label elseLabel)
+    elseVal <- expressionToVal elseBranch
+    emitStore resultType elseVal target
+    emit (Label endLabel)
 
 emitAssignFields :: Type -> Val -> [Expression] -> Emit ()
 emitAssignFields structType target expressions = do

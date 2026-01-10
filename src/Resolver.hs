@@ -27,7 +27,6 @@ type Resolve a = ReaderT Env IO a
 baseEnv :: Env
 baseEnv =
     Env [
-        ("?:", FunctionType auto [boolType, auto, auto]),
         -- Equality
         ("==", FunctionType boolType [auto, auto]),
         ("!=", FunctionType boolType [auto, auto]),
@@ -216,6 +215,8 @@ readType (ArrayExpression expressions) =
     let
         ty = readType (head expressions)
     in ArrayType ty (Just (fromIntegral (length expressions)))
+readType (IfExpression _ _ e) =
+    readType e
 
 literalType :: Literal -> Type
 literalType (StringLiteral _) = stringType
@@ -288,6 +289,11 @@ resolveExpression e@(Literal l) expectedType =
     in if subsumes ty expectedType || (ty == intType && elem expectedType [intType, shortType, charType])
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
+resolveExpression (IfExpression cond thenBranch elseBranch) expectedType = do
+    resolvedCond <- resolveExpression cond boolType
+    resolvedThen <- traverse (\e -> resolveExpression e expectedType) thenBranch
+    resolvedElse <- resolveExpression elseBranch expectedType
+    return (IfExpression resolvedCond resolvedThen resolvedElse)
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
 
 -- TODO handle conversions, for example 1 == 1.0
