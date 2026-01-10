@@ -1,0 +1,20 @@
+extern int puts(string s);
+
+bool fireRockets()
+{
+    puts("Rockets have been fired!");
+    return true;
+}
+
+void main()
+{
+    if (true || fireRockets())
+    {
+        puts("Did I hear rockets?");
+    }
+
+    if (!(false && fireRockets()))
+    {
+        puts("Did I hear rockets?");
+    }
+}

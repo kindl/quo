@@ -1,0 +1,14 @@
+extern int putchar(int c);
+
+
+int main()
+{
+    // As a variable
+    let i = true ? 107 : 106;
+    putchar(i);
+    // As an expression
+    putchar(true ? 107 : 106);
+    // Newline
+    putchar(10);
+    return 0;
+}
