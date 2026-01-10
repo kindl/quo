@@ -91,12 +91,11 @@ expressionToC (Apply (Variable name [ty]) [expression]) | getInnerText name == "
     parens (parens (typeToC ty) <> expressionToC expression)
 expressionToC (Apply (Variable name [ty]) []) | getInnerText name == "sizeof" =
     "sizeof" <> parens (typeToC ty)
-expressionToC (IfExpression cond thenBranch elseBranch) =
-    parensWrapped cond <+> "?" <+> parensWrapped thenBranch <+> ":" <+> parensWrapped elseBranch
 expressionToC (Apply (Variable name _) es) | isOperator (getInnerText name) =
     case es of
         [e] -> fromName name <> parensWrapped e
         [e1, e2] -> parensWrapped e1 <+> fromName name <+> parensWrapped e2
+        [e1, e2, e3] -> parensWrapped e1 <+> "?" <+> parensWrapped e2 <+> ":" <+> parensWrapped e3
         _ -> error ("Operator " <> show name <> " has wrong number of arguments")
 expressionToC (Apply (Variable name _) es) | isConstructor name =
     parens ("struct" <+> fromName name)

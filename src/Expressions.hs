@@ -60,8 +60,11 @@ expr = conditionalOp
 -- a = wasTrue? thenCase : elseCase
 conditionalOp :: Parser Expression
 conditionalOp =
-    (IfExpression <$> orOp <*> (operator "?" *> expr) <*> (operator ":" *> expr))
+    (makeIfExpression <$> orOp <*> operator "?" <*> expr <*> (operator ":" *> expr))
     <|> orOp
+
+makeIfExpression cond op thenExpression elseExpression =
+    Apply (Variable (Name op auto) []) [cond, thenExpression, elseExpression]
 
 -- logical operators
 orOp :: Parser Expression

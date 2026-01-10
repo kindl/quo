@@ -27,6 +27,8 @@ type Resolve a = ReaderT Env IO a
 baseEnv :: Env
 baseEnv =
     Env [
+        -- Conditional
+        ("?", FunctionType auto [boolType, auto, auto]),
         -- Equality
         ("==", FunctionType boolType [auto, auto]),
         ("!=", FunctionType boolType [auto, auto]),
@@ -215,8 +217,6 @@ readType (ArrayExpression expressions) =
     let
         ty = readType (head expressions)
     in ArrayType ty (Just (fromIntegral (length expressions)))
-readType (IfExpression _ _ e) =
-    readType e
 
 literalType :: Literal -> Type
 literalType (StringLiteral _) = stringType
@@ -289,11 +289,6 @@ resolveExpression e@(Literal l) expectedType =
     in if subsumes ty expectedType || (ty == intType && elem expectedType [intType, shortType, charType])
         then return e
         else fail ("Literal type " ++ show ty ++ " is not subsumed by type " ++ show expectedType)
-resolveExpression (IfExpression cond thenBranch elseBranch) expectedType = do
-    resolvedCond <- resolveExpression cond boolType
-    resolvedThen <- resolveExpression thenBranch expectedType
-    resolvedElse <- resolveExpression elseBranch expectedType
-    return (IfExpression resolvedCond resolvedThen resolvedElse)
 resolveExpression e ty = fail ("Unhandled expression " ++ show e ++ " of " ++ show ty)
 
 -- TODO handle conversions, for example 1 == 1.0
@@ -313,7 +308,8 @@ resolveOperator returnType (Variable var []) [resolved1, resolved2] =
 resolveOperator returnType (Variable var []) [resolved1, resolved2, resolved3] =
     let
         name = getLocatedText var
-        parameterType = readType resolved1
+        -- TODO chose the most specific type between resolved2 and resolved3
+        parameterType = readType resolved2
         resolvedReturnType = if returnType == auto then parameterType else returnType
     in Apply (Variable (Name name (FunctionType resolvedReturnType [parameterType, parameterType])) []) [resolved1, resolved2, resolved3]
 resolveOperator _ other _ =

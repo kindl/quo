@@ -178,11 +178,11 @@ definitionToBlocks nameWithType (Apply (Variable constructor []) expressions) | 
     let structType = getType nameWithType
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
-definitionToBlocks nameWithType (IfExpression cond thenBranch elseBranch) = do
+definitionToBlocks nameWithType (Apply (Variable name []) [cond, e1, e2]) | getInnerText name == "?" = do
     let name = getInnerText nameWithType
     let resultType = getType nameWithType
     emitAlloc name resultType
-    emitIfExpression' resultType ("%" <> name) cond thenBranch elseBranch
+    emitIfExpression' resultType ("%" <> name) cond e1 e2
 definitionToBlocks nameWithType (ArrayExpression expressions) =
     case getType nameWithType of
         ArrayType elementType _ -> do
@@ -352,8 +352,6 @@ expressionToVal (Literal l) =
     literalToVal l
 expressionToVal (Apply expression expressions) =
     emitApply expression expressions
-expressionToVal (IfExpression cond thenBranch elseBranch) =
-    emitIfExpression cond thenBranch elseBranch
 expressionToVal (SquareAccess expression accessor) = do
     -- This will hold the accessor converted to size
     extVal <- newIdent ".local"
@@ -380,10 +378,15 @@ expressionToVal (DotAccess expression (Name fieldName fieldType) []) = do
 
 -- TODO Make the evaluation of parameters more visible
 emitApply :: Expression -> [Expression] -> Emit Text
+emitApply (Variable name _) [cond, thenExpression, elseExpression] | getInnerText name == "?" =
+    case getType name of
+        FunctionType returnType _ ->
+            emitIfExpression returnType cond thenExpression elseExpression
+        _ -> fail ("Unexpected non-function type " <> show name)
 emitApply (Variable name _) [parameter1, parameter2] | getInnerText name == "&&" =
-    emitIfExpression parameter1 parameter2 (Literal (Bool False))
+    emitIfExpression boolType parameter1 parameter2 (Literal (Bool False))
 emitApply (Variable name _) [parameter1, parameter2] | getInnerText name == "||" =
-    emitIfExpression parameter1 (Literal (Bool True)) parameter2
+    emitIfExpression boolType parameter1 (Literal (Bool True)) parameter2
 emitApply (Variable name [targetType]) [parameter] | getInnerText name == "cast" = do
     let parameterType = readType parameter
     val <- expressionToVal parameter
@@ -503,7 +506,7 @@ emitAssignElements elementType target expressions = do
     zipWithM_ (emitAssignAux target) pairs expressions
 
 emitIfExpression' :: Type -> Val -> Expression -> Expression -> Expression -> Emit ()
-emitIfExpression' resultType target cond thenBranch elseBranch = do
+emitIfExpression' resultType target cond thenExpression elseExpression = do
     thenLabel <- newLabel "then"
     elseLabel <- newLabel "else"
     endLabel <- newLabel "end"
@@ -511,21 +514,20 @@ emitIfExpression' resultType target cond thenBranch elseBranch = do
     val <- expressionToVal cond
     emit (JumpNonZero val thenLabel elseLabel)
     emit (Label thenLabel)
-    thenVal <- expressionToVal thenBranch
+    thenVal <- expressionToVal thenExpression
     emitStore resultType thenVal target
     emit (Jump endLabel)
 
     emit (Label elseLabel)
-    elseVal <- expressionToVal elseBranch
+    elseVal <- expressionToVal elseExpression
     emitStore resultType elseVal target
     emit (Label endLabel)
 
-emitIfExpression :: Expression -> Expression -> Expression -> Emit Val
-emitIfExpression cond thenBranch elseBranch = do
+emitIfExpression :: Type -> Expression -> Expression -> Expression -> Emit Val
+emitIfExpression resultType cond thenExpression elseExpression = do
     targetVal <- newIdent ".local"
-    let resultType = readType elseBranch
     emitAlloc targetVal resultType
-    emitIfExpression' resultType ("%" <> targetVal) cond thenBranch elseBranch
+    emitIfExpression' resultType ("%" <> targetVal) cond thenExpression elseExpression
     emitLoadOrVal resultType ("%" <> targetVal)
 
 emitAssignFields :: Type -> Val -> [Expression] -> Emit ()
