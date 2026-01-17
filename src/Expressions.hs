@@ -63,6 +63,7 @@ conditionalOp =
     (makeIfExpression <$> orOp <*> operator "?" <*> expr <*> (operator ":" *> expr))
     <|> orOp
 
+makeIfExpression :: Expression -> LocatedText -> Expression -> Expression -> Expression
 makeIfExpression cond op thenExpression elseExpression =
     Apply (Variable (Name op auto) []) [cond, thenExpression, elseExpression]
 
