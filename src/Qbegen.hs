@@ -178,7 +178,7 @@ definitionToBlocks nameWithType (Apply (Variable constructor []) expressions) | 
     let structType = getType nameWithType
     emitAlloc name structType
     emitAssignFields structType ("%" <> name) expressions
-definitionToBlocks nameWithType (Apply (Variable name []) [cond, e1, e2]) | getInnerText name == "?" = do
+definitionToBlocks nameWithType (Apply (Variable variable []) [cond, e1, e2]) | getInnerText variable == "?" = do
     let name = getInnerText nameWithType
     let resultType = getType nameWithType
     emitAlloc name resultType
@@ -455,12 +455,12 @@ emitOperator' ident qbeTy "*" _ val1 val2 =
     emit (Instruction ident qbeTy "mul" [val1, val2])
 emitOperator' ident qbeTy "/" _ val1 val2 =
     emit (Instruction ident qbeTy "div" [val1, val2])
-emitOperator' ident qbeTy "&" argQbeTy val1 val2 =
+emitOperator' ident qbeTy "&" _ val1 val2 =
     emit (Instruction ident qbeTy "and" [val1, val2])
-emitOperator' ident qbeTy "|" argQbeTy val1 val2 =
+emitOperator' ident qbeTy "|" _ val1 val2 =
     emit (Instruction ident qbeTy "or" [val1, val2])
-emitOperator' ident qbeTy "^" argQbeTy val1 val2 =
-    emit (Instruction ident qbeTy ("xor" <> argQbeTy) [val1, val2])
+emitOperator' ident qbeTy "^" _ val1 val2 =
+    emit (Instruction ident qbeTy "xor" [val1, val2])
 emitOperator' ident qbeTy "==" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("ceq" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy ">" argQbeTy val1 val2 =
