@@ -113,24 +113,24 @@ instantiate genericName typeParameters (StructDefinition def functionTypeParamet
         subst = zipTypeParameters (fmap getText functionTypeParameters) typeParameters
         fields' = substitute subst fields
     in StructDefinition (overwriteText concreteName def) [] fields'
-instantiate genericName typeParameters (FunctionDefintion def functionTypeParameters returnType parameters body) =
+instantiate genericName typeParameters (FunctionDefinition def functionTypeParameters returnType parameters body) =
     let
         concreteName = concretize genericName typeParameters
         subst = zipTypeParameters (fmap getText functionTypeParameters) typeParameters
         returnType' = substitute subst returnType
         parameters' = substitute subst parameters
         body' = substitute subst body
-    in FunctionDefintion (overwriteText concreteName def) [] returnType' parameters' body'
+    in FunctionDefinition (overwriteText concreteName def) [] returnType' parameters' body'
 instantiate _ _ statement = error ("Expected definition for instantiate, but was " ++ show statement)
 
 hasTypeParameters :: Statement -> Bool
-hasTypeParameters (FunctionDefintion _ (_:_) _ _ _) = True
+hasTypeParameters (FunctionDefinition _ (_:_) _ _ _) = True
 hasTypeParameters (StructDefinition _ (_:_) _) = True
 hasTypeParameters _ = False
 
 isPermanent :: Statement -> Bool
 isPermanent (Import _ _) = True
-isPermanent (ExternDefintion _ _ _) = True
+isPermanent (ExternDefinition _ _ _) = True
 isPermanent _ = False
 
 isStructDefinition :: Statement -> Bool
@@ -143,7 +143,7 @@ lookupDefinition name (def:rest) =
     if getName def == name then Just def else lookupDefinition name rest
 
 getName :: Statement -> Text
-getName (FunctionDefintion name _ _ _ _) = getText name
+getName (FunctionDefinition name _ _ _ _) = getText name
 getName (StructDefinition name _ _) = getText name
 getName statement = error ("Expected definition for getName, but was " ++ show statement)
 

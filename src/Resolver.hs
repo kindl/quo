@@ -77,7 +77,7 @@ resolveDefinitions :: [Statement] -> Resolve [Statement]
 resolveDefinitions = foldr (resolveDefinition resolveTop) (return mempty)
 
 resolveTop :: Statement -> Resolve Statement
-resolveTop (FunctionDefintion text typeParameters returnType parameters body) = do
+resolveTop (FunctionDefinition text typeParameters returnType parameters body) = do
     resolved <- with (fmap nameToPair parameters) (resolveStatements body)
     let returnTypes = fmap getReturnType (getReturns resolved)
     when (null returnTypes && returnType /= voidType)
@@ -88,8 +88,8 @@ resolveTop (FunctionDefintion text typeParameters returnType parameters body) = 
         (fail ("Function " ++ show text ++ " return types " ++ show returnTypes
             ++ " do not fit annotated return type " ++ show returnType))
 
-    return (FunctionDefintion text typeParameters returnType parameters resolved)
-resolveTop d@(ExternDefintion _ _ _) = return d
+    return (FunctionDefinition text typeParameters returnType parameters resolved)
+resolveTop d@(ExternDefinition _ _ _) = return d
 resolveTop d@(StructDefinition _ _ _) = return d
 resolveTop i@(Import _ _) = return i
 resolveTop statement =
@@ -184,12 +184,12 @@ gatherAnnotations :: [Statement] -> TypeLookup
 gatherAnnotations = foldMap gatherAnnotation
 
 gatherAnnotation :: Statement -> TypeLookup
-gatherAnnotation (FunctionDefintion text [] returnType parameters _) =
+gatherAnnotation (FunctionDefinition text [] returnType parameters _) =
     entry text (makeFunctionType returnType parameters)
 gatherAnnotation (StructDefinition text [] parameters) =
     -- gather structs as constructors
     entry text (makeFunctionType (Concrete text []) parameters)
-gatherAnnotation (ExternDefintion text returnType parameters) =
+gatherAnnotation (ExternDefinition text returnType parameters) =
     entry text (makeFunctionType returnType parameters)
 gatherAnnotation _ = mempty
 

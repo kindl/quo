@@ -20,7 +20,7 @@ statementToC (Definition name e) =
     nameToC name <+> "=" <+> expressionToC e <> ";"
 statementToC (Call e) = expressionToC e <> ";"
 statementToC (Assignment e1 e2) = expressionToC e1 <+> "=" <+> expressionToC e2 <> ";"
-statementToC (FunctionDefintion name [] ty parameters statements) =
+statementToC (FunctionDefinition name [] ty parameters statements) =
     typeToC ty <+> fromLocatedText name
         <> parens (intercalate ", " (fmap nameToC parameters))
         <//> "{"
@@ -29,7 +29,7 @@ statementToC (FunctionDefintion name [] ty parameters statements) =
 statementToC (Return (Just e)) = "return" <+> expressionToC e <> ";"
 statementToC (Return Nothing) = "return;"
 statementToC (Import _ _) = ""
-statementToC (ExternDefintion name returnType parameters) =
+statementToC (ExternDefinition name returnType parameters) =
     typeToC returnType <+> fromLocatedText name <> parens (intercalate ", " (fmap nameToC parameters)) <>";"
 statementToC (StructDefinition name [] parameters) =
     "struct" <+> fromLocatedText name <+> "{"

@@ -150,6 +150,8 @@ getInnerText = getText . getLocatedText
 -- Consider adding (Maybe Expression) for default parameters
 type Parameter = Name
 
+type Field = Name
+
 type TypeParameter = LocatedText
 
 type ReturnType = Type
@@ -159,9 +161,9 @@ data Module = Module LocatedText [Statement]
 
 data Statement =
     Definition Name Expression
-    | FunctionDefintion LocatedText [TypeParameter] ReturnType [Parameter] [Statement]
-    | ExternDefintion LocatedText ReturnType [Parameter]
-    | StructDefinition LocatedText [TypeParameter] [Parameter]
+    | FunctionDefinition LocatedText [TypeParameter] ReturnType [Parameter] [Statement]
+    | ExternDefinition LocatedText ReturnType [Parameter]
+    | StructDefinition LocatedText [TypeParameter] [Field]
     | Call Expression
     | Assignment Expression Expression
     | If [(Expression, [Statement])] (Maybe [Statement])

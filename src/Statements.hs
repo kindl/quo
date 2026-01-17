@@ -15,7 +15,7 @@ moduleDefinition = do
     return (Module m s)
 
 statements :: Parser [Statement]
-statements = many (functionDefintion
+statements = many (functionDefinition
     <|> externDefinition
     <|> importStatement
     <|> assignmentStatement
@@ -54,7 +54,7 @@ externDefinition = do
     i <- identifier
     params <- parens (sepByTrailing parameter (token ","))
     _ <- token ";"
-    return (ExternDefintion i t params)
+    return (ExternDefinition i t params)
 
 forStatement :: Parser Statement
 forStatement = do
@@ -120,14 +120,14 @@ structDefinition = do
     _ <- token ";"
     return (StructDefinition i ts b)
 
-functionDefintion :: Parser Statement
-functionDefintion = do
+functionDefinition :: Parser Statement
+functionDefinition = do
     t <- typeVariable
     i <- identifier
     ts <- option [] typeNameParameters
     params <- parens (sepByTrailing parameter (token ","))
     body <- curlies statements
-    return (FunctionDefintion i ts t params body)
+    return (FunctionDefinition i ts t params body)
 
 parameter :: Parser Name
 parameter = liftA2 (\ty i -> Name i ty) typeVariable identifier

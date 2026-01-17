@@ -783,14 +783,14 @@ statementToDef :: Statement -> Emit [Def]
 statementToDef (Definition name e) = do
     items <- expressionToData e
     return [DataDef (getInnerText name) items]
-statementToDef (FunctionDefintion name [] ty parameters statements) = do
+statementToDef (FunctionDefinition name [] ty parameters statements) = do
     let qbeParams = fmap (\param -> (toQbeTy (getType param), getInnerText param)) parameters
     let returnType = toQbeTy ty
     blocks <- withFreshEmitEnv (bodyToBlock (fmap snd qbeParams) statements)
     -- ensures that a block for a function ends with a ret
     let blocks' = addRetIfMissing blocks
     return [FuncDef returnType (getText name) qbeParams blocks']
-statementToDef (ExternDefintion _ _ _) = return []
+statementToDef (ExternDefinition _ _ _) = return []
 statementToDef (StructDefinition _ _ _) = return []
 statementToDef s =
     fail ("Unexpected statement at top level " ++ show s)
@@ -845,8 +845,8 @@ gatherGlobalNames = foldMap gatherGlobalName
 
 gatherGlobalName :: Statement -> [Text]
 gatherGlobalName (Definition name _) = [getInnerText name]
-gatherGlobalName (FunctionDefintion name _ _ _ _) = [getText name]
-gatherGlobalName (ExternDefintion name _ _) = [getText name]
+gatherGlobalName (FunctionDefinition name _ _ _ _) = [getText name]
+gatherGlobalName (ExternDefinition name _ _) = [getText name]
 gatherGlobalName _ = []
 
 prettyMod :: Mod -> Doc ann
