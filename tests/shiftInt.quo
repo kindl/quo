@@ -1,0 +1,13 @@
+extern int putchar(int c);
+
+int main()
+{
+    let i = -107;
+    let a = i <~ 2;
+    let b = a ~> 2;
+
+    putchar(-b);
+    // Newline
+    putchar(10);
+    return 0;
+}
