@@ -212,9 +212,13 @@ special =
         (fmap string (punctuation ++ operators ++ brackets))
 
 keywords :: [Text]
-keywords = ["fn", "if", "else", "return", "let", "true", "false",
-    "for", "in", "switch", "case", "struct", "break", "continue", "while", "extern", "auto",
-    "module", "import", "break", "continue"]
+keywords =
+    [
+        "if", "else", "return", "while", "break", "continue",
+        "for", "in", "switch", "case", "struct", "extern", "auto",
+        "let", "true", "false", "fn",
+        "module", "import"
+    ]
 
 punctuation :: [Text]
 punctuation = [".", ";", ",", "=>"]
