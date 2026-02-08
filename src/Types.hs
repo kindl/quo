@@ -129,10 +129,15 @@ isOperator x = elem x operators
 operators :: [Text]
 operators =
     [
-    "==", "!=", "<=", ">=", "<", ">",
+    "==", "!=", "<=", ">=",
     "=",
+    -- Alternatives for shift operators
+    "<~", "~>",
+    "<", ">",
+
     "&&", "||",
     "&", "|", "^",
+
     "+", "-",
     "**", "*", "/", "%",
     "-_",

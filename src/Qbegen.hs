@@ -455,12 +455,18 @@ emitOperator' ident qbeTy "*" _ val1 val2 =
     emit (Instruction ident qbeTy "mul" [val1, val2])
 emitOperator' ident qbeTy "/" _ val1 val2 =
     emit (Instruction ident qbeTy "div" [val1, val2])
+-- Bitwise
 emitOperator' ident qbeTy "&" _ val1 val2 =
     emit (Instruction ident qbeTy "and" [val1, val2])
 emitOperator' ident qbeTy "|" _ val1 val2 =
     emit (Instruction ident qbeTy "or" [val1, val2])
 emitOperator' ident qbeTy "^" _ val1 val2 =
     emit (Instruction ident qbeTy "xor" [val1, val2])
+emitOperator' ident qbeTy "<~" _ val1 val2 =
+    emit (Instruction ident qbeTy "shl" [val1, val2])
+emitOperator' ident qbeTy "~>" _ val1 val2 =
+    emit (Instruction ident qbeTy "sar" [val1, val2])
+-- Equality and comparisons
 emitOperator' ident qbeTy "==" argQbeTy val1 val2 =
     emit (Instruction ident qbeTy ("ceq" <> argQbeTy) [val1, val2])
 emitOperator' ident qbeTy ">" argQbeTy val1 val2 =

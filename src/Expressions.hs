@@ -89,7 +89,11 @@ eqOp =
 
 compareOp :: Parser Expression
 compareOp =
-    leftAssoc makeBinaryOp (operator "<" <|> operator ">" <|> operator "<=" <|> operator ">=") addOp
+    leftAssoc makeBinaryOp (operator "<" <|> operator ">" <|> operator "<=" <|> operator ">=") shiftOp
+
+shiftOp :: Parser Expression
+shiftOp =
+    leftAssoc makeBinaryOp (operator "<~" <|> operator "~>") addOp
 
 -- arithmethic operators
 addOp :: Parser Expression

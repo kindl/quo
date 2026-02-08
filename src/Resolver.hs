@@ -46,6 +46,9 @@ baseEnv =
         ("^", FunctionType auto [auto, auto]),
         ("|", FunctionType auto [auto, auto]),
         ("&", FunctionType auto [auto, auto]),
+        -- Shifts
+        ("<~", FunctionType auto [auto, auto]),
+        ("~>", FunctionType auto [auto, auto]),
         -- Arithmetic
         ("-_", FunctionType auto [auto]),
         ("+", FunctionType auto [auto, auto]),

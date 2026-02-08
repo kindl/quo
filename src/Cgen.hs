@@ -91,6 +91,12 @@ expressionToC (Apply (Variable name [ty]) [expression]) | getInnerText name == "
     parens (parens (typeToC ty) <> expressionToC expression)
 expressionToC (Apply (Variable name [ty]) []) | getInnerText name == "sizeof" =
     "sizeof" <> parens (typeToC ty)
+expressionToC (Apply (Variable name _) [e]) | getInnerText name == "-_" =
+    "-" <> parensWrapped e
+expressionToC (Apply (Variable name _) [e1, e2]) | getInnerText name == "<~" =
+    parensWrapped e1 <+> "<<" <+> parensWrapped e2
+expressionToC (Apply (Variable name _) [e1, e2]) | getInnerText name == "~>" =
+    parensWrapped e1 <+> ">>" <+> parensWrapped e2
 expressionToC (Apply (Variable name _) es) | isOperator (getInnerText name) =
     case es of
         [e] -> fromName name <> parensWrapped e
