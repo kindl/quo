@@ -2,8 +2,8 @@
 module Cgen(prettyC) where
 
 import Types
-import Data.Text(Text, pack)
-import Prettyprinter(Doc, (<+>), parens)
+import Data.Text(Text)
+import Prettyprinter(Doc, (<+>), parens, pretty)
 import Helpers((<//>),
     intercalate, fromText, fromLocatedText,
     escape, indent, isConstructor)
@@ -72,7 +72,7 @@ nameToC (Name name (ArrayType ty maybeSize)) =
     -- Call recursively to handle array of arrays
     nameToC (Name name ty) <> (case maybeSize of
         Nothing -> "[]"
-        Just size -> "[" <> fromText (pack (show size)) <> "]")
+        Just size -> "[" <> pretty size <> "]")
 nameToC (Name name (FunctionType returnType parameterTypes)) =
     typeToC returnType <+> parens ("*" <+> fromLocatedText name) <> parens (intercalate ", " (fmap typeToC parameterTypes))
 nameToC (Name name ty) =
@@ -120,12 +120,12 @@ fromName :: Name -> Doc a
 fromName name = fromText (getInnerText name)
 
 literalToC :: Literal -> Doc a
-literalToC (Int32 l) = fromText (pack (show l))
-literalToC (UInt32 l) = fromText (pack (show l)) <> "U"
-literalToC (Int64 l) = fromText (pack (show l)) <> "L"
-literalToC (UInt64 l) = fromText (pack (show l)) <> "UL"
-literalToC (Float32 l) = fromText (pack (show l)) <> "f"
-literalToC (Float64 l) = fromText (pack (show l))
+literalToC (Int32 l) = pretty l
+literalToC (UInt32 l) = pretty l <> "U"
+literalToC (Int64 l) = pretty l <> "L"
+literalToC (UInt64 l) = pretty l <> "UL"
+literalToC (Float32 l) = pretty l <> "f"
+literalToC (Float64 l) = pretty l
 literalToC (Bool True) = "true"
 literalToC (Bool False) = "false"
 literalToC (StringLiteral s) = "\"" <> fromText (escape s) <> "\""
