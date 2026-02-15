@@ -128,18 +128,18 @@ makeUnaryOp :: LocatedText -> Expression -> Expression
 makeUnaryOp op a =
     Apply (Variable (Name op auto) []) [a]
 
-templateString :: Parser Expression
-templateString = do
-    TemplateStringBegin beginLocation <- next
-    stringsAndExpressions <- many (eitherP templateStringMid expr)
-    TemplateStringEnd <- next
+formatString :: Parser Expression
+formatString = do
+    FormatStringBegin beginLocation <- next
+    stringsAndExpressions <- many (eitherP formatStringMid expr)
+    FormatStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
     return (Apply (Variable (Name (LocatedText "format" beginLocation) auto) []) [parameter1, parameter2])
 
-templateStringMid :: Parser Expression
-templateStringMid = do
-    TemplateStringMid s <- next
+formatStringMid :: Parser Expression
+formatStringMid = do
+    FormatStringMid s <- next
     return (Literal (StringLiteral s))
 
 literal :: Parser Literal
@@ -172,7 +172,7 @@ primaryExpression =
     <|> variable
     <|> parens expr
     <|> arrayExpression
-    <|> templateString
+    <|> formatString
 
 -- a.b
 dotAcces :: Parser (Expression -> Expression)

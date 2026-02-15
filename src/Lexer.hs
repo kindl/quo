@@ -33,9 +33,9 @@ data Token =
     | Float Float
     | Double Double
     | String Text
-    | TemplateStringBegin Location
-    | TemplateStringMid Text
-    | TemplateStringEnd
+    | FormatStringBegin Location
+    | FormatStringMid Text
+    | FormatStringEnd
     | Whitespace
         deriving (Eq, Show, Data, Typeable)
 
@@ -82,8 +82,8 @@ overwriteLocation location (Identifier i _) =
     Identifier i location
 overwriteLocation location (Special op _) =
     Special op location
-overwriteLocation location (TemplateStringBegin _) =
-    TemplateStringBegin location
+overwriteLocation location (FormatStringBegin _) =
+    FormatStringBegin location
 overwriteLocation _ other = other
 
 whitespace :: Parser Token
@@ -96,10 +96,10 @@ singlelineComment :: Parser Text
 singlelineComment = string "//" *> takeWhile (/='\n')
 
 token :: Parser (Either (Text, Token) [(Text, Token)])
-token = eitherP (match (whitespace <|> singleToken)) templateString
+token = eitherP (match (whitespace <|> singleToken)) formatString
 
 singleToken :: Parser Token
-singleToken = fmap String nonTemplateString
+singleToken = fmap String stringLiteral
     -- Numbers have to come before special,
     -- so that the minus sign becomes part of the number
     <|> numberToken
@@ -171,8 +171,8 @@ identifierOrKeyword i =
         then Special i emptyLocation
         else Identifier i emptyLocation
 
-nonTemplateString :: Parser Text
-nonTemplateString =
+stringLiteral :: Parser Text
+stringLiteral =
     char '\"' *> escapedString (\x -> x /= '\"' && x /= '\\') <* char '\"'
 
 escapeSequence :: Parser Char
@@ -184,20 +184,20 @@ escapeSequence = char '\\' *>
     <|> char 't' *> return '\t'
     <|> char '0' *> return '\0')
 
-templateString :: Parser [(Text, Token)]
-templateString = do
-    begin <- match (string "$\"" $> TemplateStringBegin emptyLocation)
-    midParts <- alternating1 (fmap return (match templateStringPart)) expressionPart
-    end <- match (char '\"' $> TemplateStringEnd)
+formatString :: Parser [(Text, Token)]
+formatString = do
+    begin <- match (string "$\"" $> FormatStringBegin emptyLocation)
+    midParts <- alternating1 (fmap return (match formatStringPart)) expressionPart
+    end <- match (char '\"' $> FormatStringEnd)
     return (begin : concat midParts ++ [end])
 
 alternating1 :: MonadPlus f => f a -> f a -> f [a]
 alternating1 a sep =
     liftA2 (\x y -> x : concat y) a (many' (liftA2 (\x y -> [x, y]) sep a))
 
-templateStringPart :: Parser Token
-templateStringPart =
-    fmap TemplateStringMid (escapedString (\x -> x /= '\"' && x /= '\\' && x /= '{'))
+formatStringPart :: Parser Token
+formatStringPart =
+    fmap FormatStringMid (escapedString (\x -> x /= '\"' && x /= '\\' && x /= '{'))
 
 escapedString :: (Char -> Bool) -> Parser Text
 escapedString p = fmap Text.concat (many' (takeWhile1 p <|> fmap Text.singleton escapeSequence))
