@@ -130,13 +130,12 @@ makeUnaryOp op a =
 
 templateString :: Parser Expression
 templateString = do
-    TemplateStringBegin <- next
+    TemplateStringBegin beginLocation <- next
     stringsAndExpressions <- many (eitherP templateStringMid expr)
     TemplateStringEnd <- next
     let parameter1 = ArrayExpression (lefts stringsAndExpressions)
     let parameter2 = ArrayExpression (rights stringsAndExpressions)
-    -- TODO add location
-    return (Apply (Variable (Name (LocatedText "format" emptyLocation) auto) []) [parameter1, parameter2])
+    return (Apply (Variable (Name (LocatedText "format" beginLocation) auto) []) [parameter1, parameter2])
 
 templateStringMid :: Parser Expression
 templateStringMid = do

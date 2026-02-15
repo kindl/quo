@@ -33,7 +33,7 @@ data Token =
     | Float Float
     | Double Double
     | String Text
-    | TemplateStringBegin
+    | TemplateStringBegin Location
     | TemplateStringMid Text
     | TemplateStringEnd
     | Whitespace
@@ -82,6 +82,8 @@ overwriteLocation location (Identifier i _) =
     Identifier i location
 overwriteLocation location (Special op _) =
     Special op location
+overwriteLocation location (TemplateStringBegin _) =
+    TemplateStringBegin location
 overwriteLocation _ other = other
 
 whitespace :: Parser Token
@@ -184,7 +186,7 @@ escapeSequence = char '\\' *>
 
 templateString :: Parser [(Text, Token)]
 templateString = do
-    begin <- match (string "$\"" $> TemplateStringBegin)
+    begin <- match (string "$\"" $> TemplateStringBegin emptyLocation)
     midParts <- alternating1 (fmap return (match templateStringPart)) expressionPart
     end <- match (char '\"' $> TemplateStringEnd)
     return (begin : concat midParts ++ [end])
