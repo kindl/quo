@@ -8,8 +8,9 @@ import Types(Location(..), emptyLocation, operators)
 import Control.Applicative((<|>), optional)
 import Control.Monad(MonadPlus)
 import Data.Attoparsec.Combinator(manyTill', many', eitherP)
-import Data.Attoparsec.Text(Parser, takeWhile, takeWhile1, string, char, satisfy,
-    anyChar, parseOnly, match, option, endOfInput)
+import Data.Attoparsec.Text(Parser,
+    takeWhile, takeWhile1, string, char, satisfy,
+    anyChar, parseOnly, match, option)
 import qualified Data.Text as Text
 import Data.Text(Text, isPrefixOf)
 import Data.Int(Int32, Int64)
@@ -47,16 +48,22 @@ collapse = foldr collapseAux []
         collapseAux (Right r) es = r ++ es
 
 tokenize :: Text -> Text -> Either String [Token]
-tokenize file input = parseOnly (tokenizeToEnd file) input
+tokenize file input =
+    let finalPosition = Text.foldl' advance (1, 1) input
+    in parseOnly (tokenizeToEnd finalPosition file) input
 
-tokenizeToEnd :: Text -> Parser [Token]
-tokenizeToEnd file = do
-    ts <- fmap collapse (many' token <* endOfInput)
-    let located = locate file ts
-    return (filter (not . isWhitespace) located)
 
-locate :: Traversable t => Text -> t (Text, Token) -> t Token
-locate file ts = snd (mapAccumL (\startPosition (parsed, result) ->
+tokenizeToEnd :: (Word64, Word64) -> Text -> Parser [Token]
+tokenizeToEnd finalPosition file = do
+    ts <- fmap collapse (many' token)
+    let (endPosition, located) = locate file ts
+    if endPosition == finalPosition
+        then return (filter (not . isWhitespace) located)
+        else fail ("There was an error tokenizing at "
+            ++ Text.unpack file ++ ":" ++ show (fst endPosition) ++ ":" ++ show (snd endPosition))
+
+locate :: Text -> [(Text, Token)] -> ((Word64, Word64), [Token])
+locate file = mapAccumL (\startPosition (parsed, result) ->
     let
         endPosition = Text.foldl' advance startPosition parsed
         location = Location {
@@ -67,7 +74,7 @@ locate file ts = snd (mapAccumL (\startPosition (parsed, result) ->
             fileName = file
         }
         locatedToken = overwriteLocation location result
-    in (endPosition, locatedToken)) (1, 1) ts)
+    in (endPosition, locatedToken)) (1, 1)
 
 isWhitespace :: Token -> Bool
 isWhitespace Whitespace = True
