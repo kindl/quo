@@ -813,6 +813,8 @@ expressionToData e@(Literal l) =
 -- TODO constructors, create array as w 1 2 3 instead of w 1, w 2, w 3
 expressionToData (ArrayExpression es) =
     fmap concat (traverse expressionToData es)
+expressionToData e =
+    fail ("Top level expression " <> show e <> " cannot be converted to a simple data definition")
 
 -- TODO solve problem with void functions
 -- Following function:
